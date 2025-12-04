@@ -1,0 +1,804 @@
+{
+  "info": {
+    "_postman_id": "nmslite-api-mock",
+    "name": "NMSlite Mock API",
+    "description": "Complete API collection for NMSlite Mock Server\n\nBase URL: http://localhost:8443/api/v1\nHealth: http://localhost:8443/health\n\nTest Credentials:\n- Username: admin\n- Password: secret",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "nmslite"
+  },
+  "item": [
+    {
+      "name": "Health Check",
+      "item": [
+        {
+          "name": "Get Health Status",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Response has success flag\", function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.success).to.be.true;",
+                  "});",
+                  "",
+                  "pm.test(\"Service is NMSlite\", function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.data.service).to.equal(\"NMSlite Mock API\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8443/health",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8443",
+              "path": [
+                "health"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Authentication",
+      "item": [
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Response has tokens\", function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.data).to.have.property('access_token');",
+                  "    pm.expect(jsonData.data).to.have.property('refresh_token');",
+                  "});",
+                  "",
+                  "var jsonData = pm.response.json();",
+                  "pm.environment.set('access_token', jsonData.data.access_token);",
+                  "pm.environment.set('refresh_token', jsonData.data.refresh_token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"admin\",\n  \"password\": \"secret\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/auth/login",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Refresh Token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Response has new tokens\", function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.data).to.have.property('access_token');",
+                  "    pm.expect(jsonData.data).to.have.property('refresh_token');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh_token\": \"{{refresh_token}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/auth/refresh",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "refresh"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Credentials",
+      "item": [
+        {
+          "name": "List All Credentials",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Response is an array\", function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.data).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/credentials",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "credentials"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Credential",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 201\", function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "pm.test(\"Response has credential ID\", function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.data).to.have.property('id');",
+                  "    pm.environment.set('credential_id', jsonData.data.id);",
+                  "});",
+                  "",
+                  "pm.test(\"Credential has all fields\", function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.data).to.have.property('name');",
+                  "    pm.expect(jsonData.data).to.have.property('credential_type');",
+                  "    pm.expect(jsonData.data).to.have.property('username');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Test WinRM Credential\",\n  \"credential_type\": \"winrm_ntlm\",\n  \"username\": \"administrator\",\n  \"password\": \"P@ssw0rd123\",\n  \"domain\": \"CORP\",\n  \"port\": 5985,\n  \"use_ssl\": false\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/credentials",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "credentials"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Credential by ID",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Credential has correct ID\", function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.data.id).to.equal(1);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/credentials/1",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "credentials",
+                "1"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update Credential",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Credential was updated\", function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.data.name).to.equal('Updated Credential Name');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Updated Credential Name\",\n  \"port\": 5986,\n  \"use_ssl\": true\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/credentials/1",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "credentials",
+                "1"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Delete Credential",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200 or 404\", function () {",
+                  "    pm.expect([200, 404]).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/credentials/999",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "credentials",
+                "999"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Devices",
+      "item": [
+        {
+          "name": "List All Devices",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Response is an array\", function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.data).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/devices",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "devices"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Device",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 201\", function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "pm.test(\"Response has device ID\", function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.data).to.have.property('id');",
+                  "    pm.environment.set('device_id', jsonData.data.id);",
+                  "});",
+                  "",
+                  "pm.test(\"Device has correct IP\", function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.data.ip).to.equal('192.168.1.150');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ip\": \"192.168.1.150\",\n  \"hostname\": \"SERVER-PROD-01\",\n  \"os\": \"Windows Server 2022\",\n  \"polling_interval\": 60\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/devices",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "devices"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Device by ID",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Device has correct ID\", function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.data.id).to.equal(1);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/devices/1",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "devices",
+                "1"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update Device",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Device was updated\", function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.data.polling_interval).to.equal(120);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"hostname\": \"SERVER-01-UPDATED\",\n  \"polling_interval\": 120\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/devices/1",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "devices",
+                "1"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Delete Device",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200 or 404\", function () {",
+                  "    pm.expect([200, 404]).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/devices/999",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "devices",
+                "999"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Discover Devices in Subnet",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Response has discovered devices\", function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.data).to.have.property('discovered');",
+                  "    pm.expect(jsonData.data.discovered).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subnet\": \"192.168.1.0/24\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/devices/discover",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "devices",
+                "discover"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Provision Device",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Device status is provisioned\", function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.data.status).to.equal('provisioned');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"credential_id\": 1,\n  \"polling_interval\": 60\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/devices/1/provision",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "devices",
+                "1",
+                "provision"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Deprovision Device",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Device status is discovered\", function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.data.status).to.equal('discovered');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": ""
+            },
+            "url": {
+              "raw": "{{base_url}}/devices/1/deprovision",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "devices",
+                "1",
+                "deprovision"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Metrics",
+      "item": [
+        {
+          "name": "Get Latest Metrics",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Response has metrics data\", function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.data).to.have.property('device_id');",
+                  "    pm.expect(jsonData.data).to.have.property('timestamp');",
+                  "    pm.expect(jsonData.data).to.have.property('cpu');",
+                  "    pm.expect(jsonData.data).to.have.property('memory');",
+                  "    pm.expect(jsonData.data).to.have.property('disk');",
+                  "    pm.expect(jsonData.data).to.have.property('network');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/devices/1/metrics",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "devices",
+                "1",
+                "metrics"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Metrics History",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Response has metrics history\", function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.data).to.have.property('device_id');",
+                  "    pm.expect(jsonData.data).to.have.property('metrics');",
+                  "    pm.expect(jsonData.data.metrics).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"limit\": 24\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/devices/1/metrics/history",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "devices",
+                "1",
+                "metrics",
+                "history"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Set base_url if not already set",
+          "if (!pm.environment.get('base_url')) {",
+          "  pm.environment.set('base_url', 'http://localhost:8443/api/v1');",
+          "}"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8443/api/v1",
+      "type": "string"
+    },
+    {
+      "key": "access_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "refresh_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "device_id",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "credential_id",
+      "value": "1",
+      "type": "string"
+    }
+  ]
+}
