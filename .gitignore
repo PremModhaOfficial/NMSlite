@@ -20,3 +20,6 @@ Thumbs.db
 
 # Binary
 *.exe
+
+# Archive directory (documentation, reports)
+archive/

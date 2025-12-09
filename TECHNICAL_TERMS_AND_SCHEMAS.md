@@ -76,7 +76,8 @@ The authoritative record of a monitored asset. It represents the successful "bin
 **What it is comprised of:**
 *   **Identity:** Hostname, IP Address, and a system-generated UUID.
 *   **Operational Config:** Which Plugin to use for polling (e.g., `windows-winrm-plugin`) and which Credential Profile to use for auth.
-*   **State:** Current status (`active`, `maintenance`, `down`).
+*   **Persisted State:** Only `status` (`active`, `maintenance`, `down`) is stored in the database - used for maintenance mode and determining which monitors to load into cache.
+*   **Cached State:** Runtime fields (`consecutive_failures`, `last_poll_at`, `next_poll_deadline`) exist only in the scheduler's in-memory cache.
 
 **How the Plugin is Selected:**
 The association is determined during the **Discovery Phase** (see Section 2).
@@ -115,11 +116,32 @@ The association is determined during the **Discovery Phase** (see Section 2).
   "discovery_profile_id": "uuid-discovery-1",
   "polling_interval_seconds": 60,
   "status": "active",
-  "consecutive_failures": 0,
-  "last_poll_at": "2023-12-07T12:00:00Z",
   "deleted_at": null
 }
 ```
+
+**State Management (Database vs Cache vs Derived):**
+
+| Field | Storage | Description |
+|-------|---------|-------------|
+| `status` | **Database** | Persisted. Values: `active`, `maintenance`, `down`. Required for maintenance mode and to know which monitors to load. |
+| `consecutive_failures` | **Cache Only** | Runtime counter in scheduler cache. Reset on success, incremented on failure. |
+| `last_poll_at` | **Cache Only** | Tracked in scheduler cache for deadline calculation. |
+| `next_poll_deadline` | **Cache Only** | Computed as `last_poll_at + polling_interval_seconds`. Used by priority queue. |
+| `last_successful_poll_at` | **Derived** | Query from `metrics`: `MAX(timestamp) WHERE device_id = ?` |
+
+**Cache Architecture:**
+*   **What's Cached:** Only monitors with `status = 'active'` are loaded into the in-memory scheduler cache.
+*   **Cache Invalidation:** The cache is updated when CRUD operations occur on any profile (credentials, discovery, monitors).
+*   **On Status Change:** When a monitor's status changes (e.g., to `maintenance` or `down`), it is removed from the cache. When changed back to `active`, it is re-added.
+*   **On Restart:** Active monitors are loaded from DB, and `last_poll_at` is derived from the `metrics` table to compute initial deadlines.
+
+**Polling Loop - No DB Writes:**
+The automatic polling loop **NEVER writes to the monitors table**. State changes are handled via signals:
+*   **Failure Threshold Exceeded:** When `consecutive_failures >= down_threshold`, the poller emits a signal (not a DB write). A separate handler processes this signal and updates `status = 'down'` via the standard CRUD path.
+*   **Recovery:** When a previously-down monitor succeeds, a signal is emitted to update `status = 'active'`.
+
+This approach eliminates write amplification from constant state updates during polling.
 
 ---
 
@@ -152,7 +174,7 @@ We utilize **TimescaleDB** (PostgreSQL extension) with a **Single Unified Hypert
 
 **The Schema:**
 ```sql
-CREATE TABLE unified_metrics (
+CREATE TABLE metrics (
     timestamp    TIMESTAMPTZ NOT NULL,
     metric_group VARCHAR(50) NOT NULL, -- e.g., 'host.cpu', 'net.interface'
     device_id    UUID NOT NULL,
@@ -166,18 +188,18 @@ CREATE TABLE unified_metrics (
 );
 
 -- Convert to TimescaleDB hypertable
-SELECT create_hypertable('unified_metrics', 'timestamp', chunk_time_interval => INTERVAL '1 day');
+SELECT create_hypertable('metrics', 'timestamp', chunk_time_interval => INTERVAL '1 day');
 
 -- Compression (segmented for efficiency)
-ALTER TABLE unified_metrics SET (
+ALTER TABLE metrics SET (
     timescaledb.compress,
     timescaledb.compress_segmentby = 'device_id, metric_group',
     timescaledb.compress_orderby = 'timestamp DESC'
 );
-SELECT add_compression_policy('unified_metrics', INTERVAL '1 hour');
+SELECT add_compression_policy('metrics', INTERVAL '1 hour');
 
 -- Retention (configurable via config.yaml: metrics.retention_days)
-SELECT add_retention_policy('unified_metrics', INTERVAL '90 days');
+SELECT add_retention_policy('metrics', INTERVAL '90 days');
 ```
 
 ---
@@ -297,12 +319,20 @@ The `credential_details` field is dynamic. We need to validate it *before* savin
 **Strategy:**
 We use a **"Pull-Based" Scheduler** with a **"Worker Pool"** executor. This avoids creating a persistent goroutine for every device (which doesn't scale) and decoupling scheduling from execution.
 
+**Critical Design Principle: No DB Writes in Polling Loop**
+The automatic polling loop **NEVER writes to the database**. All state changes are:
+1. Tracked in the in-memory cache
+2. Communicated via signals to a separate handler
+3. Persisted through the standard CRUD layer (which also invalidates/updates the cache)
+
 **1. Components:**
-*   **In-Memory Scheduler (The Heap):** A Priority Queue (Min-Heap) storing active monitors ordered by `next_poll_at`. Rebuilt from DB on server restart.
+*   **In-Memory Scheduler Cache:** A `sync.Map` holding only `active` monitors with their runtime state (`consecutive_failures`, `last_poll_at`, `next_poll_deadline`).
+*   **Priority Queue (Min-Heap):** Orders cached monitors by `next_poll_deadline`. Polled every **10 seconds** to extract due tasks.
 *   **Liveness Gatekeeper:** A high-concurrency pool (configurable via `liveness_pool_size`, default: 500) with a short timeout (configurable via `liveness_timeout_ms`) to filter out down devices.
 *   **Job Queue:** A buffered channel (`chan PollingTask`) for heavy plugin tasks.
 *   **Worker Pool:** A fixed number of goroutines (configurable via `worker_pool_size`, default: 50) that execute the plugins.
-*   **Batch Writer:** A dedicated service that aggregates metrics and bulk-inserts them.
+*   **State Signal Channel:** A channel for emitting state change signals (e.g., `monitor.down`, `monitor.recovered`).
+*   **Batch Writer:** A dedicated service that aggregates metrics and bulk-inserts them to `metrics` only.
 
 **2. Liveness Check (TCP SYN):**
 *   **Method:** TCP SYN probe to the plugin's primary port (e.g., 5985 for WinRM, 22 for SSH).
@@ -316,11 +346,11 @@ We use a **"Pull-Based" Scheduler** with a **"Worker Pool"** executor. This avoi
 
 **4. Execution Flow:**
 
-1.  **Schedule Check (Ticker):**
-    *   Peek Min-Heap.
-    *   While `NextPoll <= NOW()`:
-        *   Pop task.
-        *   **Reschedule:** `NextPoll += Interval`. Push back to Heap.
+1.  **Schedule Check (Every 10 Seconds):**
+    *   Poll the Priority Queue (Min-Heap).
+    *   While `NextPollDeadline <= NOW()`:
+        *   Pop task from heap.
+        *   **Reschedule in Cache:** `NextPollDeadline = NOW() + Interval`. Push back to Heap.
         *   **Accumulate:** Add task to a local **Batch Buffer** (configurable via `liveness_batch_size`, default: 50).
         *   **Flush:** When buffer full (or every `batch_flush_interval_ms`, default: 100ms), push `Batch` to `PingQueue`.
 
@@ -329,23 +359,76 @@ We use a **"Pull-Based" Scheduler** with a **"Worker Pool"** executor. This avoi
     *   **Check:** TCP SYN probe all targets concurrently (timeout: `liveness_timeout_ms`).
     *   **Filter:**
         *   **Qualified (UP):** Push to `JobQueue` for Plugin collection.
-        *   **Disqualified (DOWN):** Increment `consecutive_failures`. If >= `down_threshold`, mark as `down`.
-    *   **Bulk Update:** Execute `UPDATE monitors SET consecutive_failures=..., status=... WHERE id IN (...)`.
+        *   **Disqualified (DOWN):** Increment `consecutive_failures` **in cache only**.
+    *   **Threshold Check:** If `consecutive_failures >= down_threshold`:
+        *   Emit signal to `StateSignalChannel`: `{type: "monitor.down", monitor_id: "..."}`
+        *   **No direct DB write** - signal handler processes this asynchronously.
 
 3.  **Execute (Plugin Worker):**
     *   Worker pops `task` from `JobQueue`.
     *   **Context Timeout:** Creates a context with a hard deadline (`plugin_timeout_ms`, default: 10000ms).
     *   **Plugin Call:** `subprocess.Run("./plugins/{plugin_id}", stdin=JSON)`.
 
-4.  **Result Handling:**
-    *   **Success:** Reset `consecutive_failures` to 0. Send metrics to `ResultQueue`.
-    *   **Failure:** Increment `consecutive_failures`. Log error. Retry on next scheduled interval only.
+4.  **Result Handling (Cache Updates Only):**
+    *   **Success:** 
+        *   Reset `consecutive_failures` to 0 **in cache**.
+        *   Update `last_poll_at` **in cache**.
+        *   Send metrics to `ResultQueue`.
+        *   If monitor was previously down, emit signal: `{type: "monitor.recovered", monitor_id: "..."}`
+    *   **Failure:** 
+        *   Increment `consecutive_failures` **in cache**.
+        *   Log error. Retry on next scheduled interval only.
 
-5.  **Storage (Batch Writer):**
+5.  **State Signal Handler (Separate Goroutine):**
+    *   Consumes from `StateSignalChannel`.
+    *   Processes state transitions via the standard CRUD layer:
+        *   `monitor.down` → Updates `status = 'down'` in DB, removes from cache.
+        *   `monitor.recovered` → Updates `status = 'active'` in DB, re-adds to cache.
+    *   CRUD layer handles cache invalidation automatically.
+
+6.  **Storage (Batch Writer):**
     *   Consumes from `ResultQueue`.
     *   Buffers metrics until `metric_batch_size` reached OR `metric_flush_interval_ms` elapsed.
-    *   Uses PostgreSQL `COPY` protocol (via `pgx`) for high-throughput bulk insert.
+    *   Uses PostgreSQL `COPY` protocol (via `pgx`) for high-throughput bulk insert to `metrics` **only**.
     *   TimescaleDB handles compression of chunks older than `compression_after` (default: 1 hour).
+
+**5. Cache Lifecycle:**
+
+```
+[Startup]
+    |
+    v
+Load active monitors from DB (WHERE status = 'active' AND deleted_at IS NULL)
+    |
+    v
+For each monitor: derive last_poll_at from metrics (MAX timestamp)
+    |
+    v
+Compute next_poll_deadline = last_poll_at + polling_interval_seconds
+    |
+    v
+Insert into Priority Queue
+    |
+    v
+[Normal Operation - Every 10s poll the queue]
+    |
+    v
+[CRUD Operation on any profile?] ---> Invalidate/Update cache
+```
+
+**6. Cache Invalidation Triggers:**
+
+| Operation | Cache Action |
+|-----------|--------------|
+| Create Monitor (status=active) | Add to cache with computed deadline |
+| Update Monitor config | Update cache entry, recompute deadline if interval changed |
+| Update Monitor status → maintenance/down | Remove from cache |
+| Update Monitor status → active | Add to cache |
+| Delete Monitor (soft) | Remove from cache |
+| Restore Monitor | Add to cache if status=active |
+| Update Credential Profile | Refresh affected monitors in cache |
+| Delete Credential Profile | Remove affected monitors from cache |
+| Update Discovery Profile | No cache impact (discovery is separate from polling) |
 ## 8. Plugin Architecture (Pure CLI + Batching)
 
 **Strategy:**
@@ -529,11 +612,8 @@ CREATE TABLE monitors (
     discovery_profile_id UUID REFERENCES discovery_profiles(id) ON DELETE RESTRICT,
     polling_interval_seconds INT DEFAULT 60,
     
-    -- State
+    -- Persisted State (only status - for maintenance mode and cache loading)
     status VARCHAR(50) DEFAULT 'active', -- 'active', 'maintenance', 'down'
-    consecutive_failures INT DEFAULT 0,
-    last_poll_at TIMESTAMPTZ,
-    last_successful_poll_at TIMESTAMPTZ,
     
     -- Timestamps
     created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -541,18 +621,23 @@ CREATE TABLE monitors (
     deleted_at TIMESTAMPTZ DEFAULT NULL -- Soft delete
 );
 
+-- Runtime state (consecutive_failures, last_poll_at, next_poll_deadline) exists
+-- ONLY in the scheduler cache. The polling loop NEVER writes to this table.
+-- Status changes are handled via signals processed through the CRUD layer.
+
 -- Performance indexes
 CREATE INDEX idx_monitors_ip_address ON monitors(ip_address);
 CREATE INDEX idx_monitors_status ON monitors(status) WHERE deleted_at IS NULL;
 CREATE INDEX idx_monitors_plugin_id ON monitors(plugin_id);
 CREATE INDEX idx_monitors_deleted_at ON monitors(deleted_at) WHERE deleted_at IS NULL;
-CREATE INDEX idx_monitors_next_poll ON monitors(status, last_poll_at) WHERE status = 'active' AND deleted_at IS NULL;
+-- Index for loading active monitors into cache on startup
+CREATE INDEX idx_monitors_active ON monitors(id) WHERE status = 'active' AND deleted_at IS NULL;
 ```
 
 **4. Metric Tables (TimescaleDB Hypertable)**
 ```sql
 -- 1. Master Table (TimescaleDB Hypertable)
-CREATE TABLE unified_metrics (
+CREATE TABLE metrics (
     timestamp TIMESTAMPTZ NOT NULL,
     metric_group VARCHAR(50) NOT NULL, -- e.g., 'host.cpu', 'host.memory', 'net.interface'
     device_id UUID NOT NULL,
@@ -563,23 +648,23 @@ CREATE TABLE unified_metrics (
 );
 
 -- Convert to TimescaleDB hypertable (chunk interval: 1 day)
-SELECT create_hypertable('unified_metrics', 'timestamp', chunk_time_interval => INTERVAL '1 day');
+SELECT create_hypertable('metrics', 'timestamp', chunk_time_interval => INTERVAL '1 day');
 
 -- Indexes for query performance
-CREATE INDEX idx_unified_metrics_device_time ON unified_metrics(device_id, timestamp DESC);
-CREATE INDEX idx_unified_metrics_group_time ON unified_metrics(metric_group, timestamp DESC);
-CREATE INDEX idx_unified_metrics_tags ON unified_metrics USING GIN (tags);
+CREATE INDEX idx_metrics_device_time ON metrics(device_id, timestamp DESC);
+CREATE INDEX idx_metrics_group_time ON metrics(metric_group, timestamp DESC);
+CREATE INDEX idx_metrics_tags ON metrics USING GIN (tags);
 
 -- Compression policy (compress chunks older than 1 hour)
-ALTER TABLE unified_metrics SET (
+ALTER TABLE metrics SET (
     timescaledb.compress,
     timescaledb.compress_segmentby = 'device_id, metric_group',
     timescaledb.compress_orderby = 'timestamp DESC'
 );
-SELECT add_compression_policy('unified_metrics', INTERVAL '1 hour');
+SELECT add_compression_policy('metrics', INTERVAL '1 hour');
 
 -- Retention policy (configurable, default 90 days)
-SELECT add_retention_policy('unified_metrics', INTERVAL '90 days');
+SELECT add_retention_policy('metrics', INTERVAL '90 days');
 ```
 
 **5. Supported Metric Groups (Initial Scope):**

@@ -1,0 +1,78 @@
+# =============================================================================
+# NMS Lite Configuration
+# =============================================================================
+# Environment variable override: NMS_<SECTION>_<KEY> (e.g., NMS_SERVER_PORT)
+# =============================================================================
+
+server:
+  host: "0.0.0.0"
+  port: 8080
+  read_timeout_ms: 30000
+  write_timeout_ms: 30000
+
+# TLS Configuration (Required for production)
+tls:
+  enabled: false
+  cert_file: "/etc/nms/certs/server.crt"
+  key_file: "/etc/nms/certs/server.key"
+
+# CORS Configuration
+cors:
+  enabled: true
+  allowed_origins: ["http://localhost:3000"]
+  allowed_methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+  allowed_headers: ["Authorization", "Content-Type"]
+  max_age_seconds: 3600
+
+database:
+  host: "localhost"
+  port: 5432
+  user: "nmslite"
+  password: "nmslite"
+  dbname: "nmslite"
+  ssl_mode: "disable"
+  max_open_conns: 25
+  max_idle_conns: 5
+  conn_max_lifetime_minutes: 30
+
+# Authentication & Security
+auth:
+  admin_username: "admin"
+  admin_password: "Merp2310*"
+  jwt_secret: "99999999999999999999999999999999"
+  jwt_expiry_hours: 24
+  encryption_key: "99999999999999999999999999999999"
+
+# Poller Configuration
+poller:
+  worker_pool_size: 50
+  liveness_pool_size: 500
+  liveness_timeout_ms: 2000
+  liveness_batch_size: 50
+  batch_flush_interval_ms: 100
+  plugin_timeout_ms: 10000
+  down_threshold: 3
+
+# Metrics Storage
+metrics:
+  batch_size: 100
+  flush_interval_ms: 1000
+  retention_days: 90
+  compression_after_hours: 1
+
+# Discovery Configuration
+discovery:
+  max_discovery_workers: 100
+  default_port_timeout_ms: 1000
+
+# Plugin Configuration
+plugins:
+  directory: "./plugins"
+  scan_interval_seconds: 60
+
+# Logging
+logging:
+  level: "info"
+  format: "json"
+  output: "stdout"
+  file_path: "/var/log/nms/nms.log"
