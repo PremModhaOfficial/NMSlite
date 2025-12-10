@@ -15,6 +15,8 @@ import (
 	"github.com/nmslite/nmslite/internal/auth"
 	"github.com/nmslite/nmslite/internal/config"
 	"github.com/nmslite/nmslite/internal/database"
+	"github.com/nmslite/nmslite/internal/database/db_gen"
+	"github.com/nmslite/nmslite/internal/eventbus"
 )
 
 func main() {
@@ -59,8 +61,22 @@ func main() {
 		log.Fatalf("Failed to initialize auth service: %v", err)
 	}
 
-	// Create API router
-	router := api.NewRouter(cfg, authService, logger, db)
+	// Initialize EventBus
+	eventBusSize := cfg.EventBus.DiscoveryEventsChannelSize
+	if eventBusSize <= 0 {
+		eventBusSize = 50 // default buffer size
+	}
+	eb := eventbus.NewEventBus(eventBusSize)
+	logger.Info("EventBus initialized", "buffer_size", eventBusSize)
+
+	// Start StateHandler goroutine for event processing
+	go eventbus.StartStateHandler(eb, logger)
+
+	// Start DiscoveryWorker goroutine for async discovery jobs
+	go eventbus.StartDiscoveryWorker(eb, db_gen.New(db), logger)
+
+	// Create API router and pass eventBus
+	router := api.NewRouter(cfg, authService, logger, db, eb)
 
 	// Create HTTP server
 	srv := &http.Server{

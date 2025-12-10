@@ -21,6 +21,7 @@ type Config struct {
 	Metrics   MetricsConfig   `yaml:"metrics"`
 	Discovery DiscoveryConfig `yaml:"discovery"`
 	Plugins   PluginsConfig   `yaml:"plugins"`
+	EventBus  EventBusConfig  `yaml:"eventbus"`
 	Logging   LoggingConfig   `yaml:"logging"`
 }
 
@@ -90,6 +91,14 @@ type DiscoveryConfig struct {
 type PluginsConfig struct {
 	Directory           string `yaml:"directory"`
 	ScanIntervalSeconds int    `yaml:"scan_interval_seconds"`
+}
+
+type EventBusConfig struct {
+	PollJobsChannelSize        int `yaml:"poll_jobs_channel_size"`
+	MetricResultsChannelSize   int `yaml:"metric_results_channel_size"`
+	CacheEventsChannelSize     int `yaml:"cache_events_channel_size"`
+	StateSignalChannelSize     int `yaml:"state_signal_channel_size"`
+	DiscoveryEventsChannelSize int `yaml:"discovery_events_channel_size"`
 }
 
 type LoggingConfig struct {
@@ -176,6 +185,23 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v := os.Getenv("NMS_AUTH_ENCRYPTION_KEY"); v != "" {
 		cfg.Auth.EncryptionKey = v
+	}
+
+	// EventBus overrides
+	if v := os.Getenv("NMS_EVENTBUS_POLL_JOBS_CHANNEL_SIZE"); v != "" {
+		fmt.Sscanf(v, "%d", &cfg.EventBus.PollJobsChannelSize)
+	}
+	if v := os.Getenv("NMS_EVENTBUS_METRIC_RESULTS_CHANNEL_SIZE"); v != "" {
+		fmt.Sscanf(v, "%d", &cfg.EventBus.MetricResultsChannelSize)
+	}
+	if v := os.Getenv("NMS_EVENTBUS_CACHE_EVENTS_CHANNEL_SIZE"); v != "" {
+		fmt.Sscanf(v, "%d", &cfg.EventBus.CacheEventsChannelSize)
+	}
+	if v := os.Getenv("NMS_EVENTBUS_STATE_SIGNAL_CHANNEL_SIZE"); v != "" {
+		fmt.Sscanf(v, "%d", &cfg.EventBus.StateSignalChannelSize)
+	}
+	if v := os.Getenv("NMS_EVENTBUS_DISCOVERY_EVENTS_CHANNEL_SIZE"); v != "" {
+		fmt.Sscanf(v, "%d", &cfg.EventBus.DiscoveryEventsChannelSize)
 	}
 }
 

@@ -3,15 +3,13 @@ package api
 import (
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/nmslite/nmslite/internal/auth"
 	"github.com/nmslite/nmslite/internal/database/db_gen"
-	"github.com/sqlc-dev/pqtype"
-	"net"
+	"github.com/nmslite/nmslite/internal/eventbus"
 	"time"
 )
 
@@ -19,13 +17,15 @@ import (
 type DiscoveryHandler struct {
 	q           db_gen.Querier
 	authService *auth.Service
+	eventBus    *eventbus.EventBus
 }
 
 // NewDiscoveryHandler creates a new discovery handler
-func NewDiscoveryHandler(q db_gen.Querier, authService *auth.Service) *DiscoveryHandler {
+func NewDiscoveryHandler(q db_gen.Querier, authService *auth.Service, eb *eventbus.EventBus) *DiscoveryHandler {
 	return &DiscoveryHandler{
 		q:           q,
 		authService: authService,
+		eventBus:    eb,
 	}
 }
 
@@ -202,6 +202,7 @@ func (h *DiscoveryHandler) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 // Run handles POST /api/v1/discoveries/{id}/run
+// Returns 202 Accepted immediately with a job_id for async polling
 func (h *DiscoveryHandler) Run(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")
 	id, err := uuid.Parse(idStr)
@@ -210,77 +211,47 @@ func (h *DiscoveryHandler) Run(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 1. Fetch Profile
+	// 1. Fetch Profile to validate it exists
 	profile, err := h.q.GetDiscoveryProfile(r.Context(), id)
 	if err != nil {
 		sendError(w, r, http.StatusNotFound, "NOT_FOUND", "Discovery profile not found", err)
 		return
 	}
 
-	// 2. Decrypt Target
-	targetValue := profile.TargetValue
-	if decrypted, err := h.authService.Decrypt(targetValue); err == nil {
-		targetValue = string(decrypted)
+	// 2. Generate unique job ID for this discovery run
+	jobID := uuid.New()
+
+	// 3. Publish TopicDiscoveryRun event with profile ID and job ID
+	runEvent := eventbus.DiscoveryRunEvent{
+		JobID:     jobID,
+		ProfileID: id,
+		StartedAt: time.Now(),
 	}
 
-	// 3. Parse Ports
-	var ports []int
-	if err := json.Unmarshal(profile.Ports, &ports); err != nil {
-		sendError(w, r, http.StatusInternalServerError, "DATA_ERROR", "Failed to parse ports", err)
+	err = h.eventBus.Publish(r.Context(), eventbus.TopicDiscoveryRun, runEvent)
+	if err != nil {
+		sendError(w, r, http.StatusInternalServerError, "EVENT_PUBLISH_ERROR", "Failed to publish discovery event", err)
 		return
 	}
 
-	// 4. Parse Credential IDs (Placeholder for future plugin usage)
-	// Currently unused but kept for schema structure
-
-	// 5. Run Scan (Synchronous)
-	// Clear previous results for this profile first (Simplification for this demo)
-	h.q.ClearDiscoveredDevices(r.Context(), uuid.NullUUID{UUID: id, Valid: true})
-
-	discoveredCount := 0
-	targetIP := targetValue 
-	
-	for _, port := range ports {
-		address := fmt.Sprintf("%s:%d", targetIP, port)
-		timeout := time.Duration(profile.PortScanTimeoutMs.Int32) * time.Millisecond
-		if timeout == 0 {
-			timeout = 1 * time.Second
-		}
-
-		conn, err := net.DialTimeout("tcp", address, timeout)
-		if err == nil {
-			conn.Close()
-			// Port is OPEN -> Add to Discovered Devices (Staging)
-			
-			_, err := h.q.CreateDiscoveredDevice(r.Context(), db_gen.CreateDiscoveredDeviceParams{
-				DiscoveryProfileID: uuid.NullUUID{UUID: profile.ID, Valid: true},
-				IpAddress:          pqtype.Inet{IPNet: net.IPNet{IP: net.ParseIP(targetIP), Mask: net.CIDRMask(32, 32)}, Valid: true},
-				Hostname:           sql.NullString{String: targetIP, Valid: true},
-				Port:               int32(port),
-				Status:             sql.NullString{String: "new", Valid: true},
-			})
-			
-			if err == nil {
-				discoveredCount++
-			}
-		}
-	}
-
-	// 6. Update Profile Status
-	h.q.UpdateDiscoveryProfile(r.Context(), db_gen.UpdateDiscoveryProfileParams{
-		ID:                   id,
-		Name:                 profile.Name,
-		TargetType:           profile.TargetType,
-		TargetValue:          profile.TargetValue, // Encrypted
-		Ports:                profile.Ports,
-		PortScanTimeoutMs:    profile.PortScanTimeoutMs,
-		CredentialProfileIds: profile.CredentialProfileIds,
-		// We should add status fields update to sqlc but for now we just return success
+	// 4. Create initial job entry in job store
+	jobStore := eventbus.GetGlobalJobStore()
+	jobStore.SetJob(&eventbus.DiscoveryJob{
+		JobID:     jobID,
+		ProfileID: id,
+		Status:    "pending",
+		Progress:  0,
+		StartedAt: time.Now(),
 	})
 
-	sendJSON(w, http.StatusOK, map[string]interface{}{
-		"status": "completed",
-		"devices_discovered": discoveredCount,
+	// 5. Return 202 Accepted immediately with job_id
+	// Suppress unused profile warning by using it
+	_ = profile
+	sendJSON(w, http.StatusAccepted, map[string]interface{}{
+		"status":     "accepted",
+		"message":    "Discovery job queued for execution",
+		"job_id":     jobID.String(),
+		"profile_id": id.String(),
 	})
 }
 
@@ -300,13 +271,51 @@ func (h *DiscoveryHandler) GetResults(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sendJSON(w, http.StatusOK, map[string]interface{}{
-		"data": results,
+		"data":  results,
 		"total": len(results),
 	})
 }
 
 // GetJob handles GET /api/v1/discoveries/{id}/jobs/{job_id}
+// Returns the status and progress of a discovery job
 func (h *DiscoveryHandler) GetJob(w http.ResponseWriter, r *http.Request) {
-	// TODO: Implement discovery job status retrieval
-	sendError(w, r, http.StatusNotImplemented, "NOT_IMPLEMENTED", "This endpoint is not yet implemented", nil)
+	idStr := chi.URLParam(r, "id")
+	profileID, err := uuid.Parse(idStr)
+	if err != nil {
+		sendError(w, r, http.StatusBadRequest, "INVALID_ID", "Invalid profile UUID format", err)
+		return
+	}
+
+	jobIDStr := chi.URLParam(r, "job_id")
+	jobID, err := uuid.Parse(jobIDStr)
+	if err != nil {
+		sendError(w, r, http.StatusBadRequest, "INVALID_JOB_ID", "Invalid job UUID format", err)
+		return
+	}
+
+	// Query the job store for job status
+	jobStore := eventbus.GetGlobalJobStore()
+	job, exists := jobStore.GetJob(jobID)
+	if !exists {
+		sendError(w, r, http.StatusNotFound, "JOB_NOT_FOUND", "Discovery job not found", nil)
+		return
+	}
+
+	// Validate that the job belongs to the requested profile
+	if job.ProfileID != profileID {
+		sendError(w, r, http.StatusNotFound, "JOB_NOT_FOUND", "Job does not belong to this discovery profile", nil)
+		return
+	}
+
+	// Return job status and progress
+	sendJSON(w, http.StatusOK, map[string]interface{}{
+		"job_id":        job.JobID.String(),
+		"profile_id":    job.ProfileID.String(),
+		"status":        job.Status,
+		"progress":      job.Progress,
+		"started_at":    job.StartedAt.Format(time.RFC3339),
+		"completed_at":  job.CompletedAt,
+		"devices_found": job.DevicesFound,
+		"error":         job.Error,
+	})
 }

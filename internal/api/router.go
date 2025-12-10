@@ -9,11 +9,12 @@ import (
 	"github.com/nmslite/nmslite/internal/auth"
 	"github.com/nmslite/nmslite/internal/config"
 	"github.com/nmslite/nmslite/internal/database/db_gen"
+	"github.com/nmslite/nmslite/internal/eventbus"
 	"github.com/nmslite/nmslite/internal/middleware"
 )
 
 // Router creates and configures the API router
-func NewRouter(cfg *config.Config, authService *auth.Service, logger *slog.Logger, db *sql.DB) http.Handler {
+func NewRouter(cfg *config.Config, authService *auth.Service, logger *slog.Logger, db *sql.DB, eb *eventbus.EventBus) http.Handler {
 	r := chi.NewRouter()
 
 	// Global middleware
@@ -35,7 +36,7 @@ func NewRouter(cfg *config.Config, authService *auth.Service, logger *slog.Logge
 	healthHandler := NewHealthHandler()
 	authHandler := NewAuthHandler(authService)
 	credentialHandler := NewCredentialHandler(db_gen.New(db), authService)
-	discoveryHandler := NewDiscoveryHandler(db_gen.New(db), authService)
+	discoveryHandler := NewDiscoveryHandler(db_gen.New(db), authService, eb)
 	monitorHandler := NewMonitorHandler(db_gen.New(db))
 	protocolHandler := NewProtocolHandler()
 

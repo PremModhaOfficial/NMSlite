@@ -70,6 +70,14 @@ plugins:
   directory: "./plugins"
   scan_interval_seconds: 60
 
+# Event Bus Configuration
+eventbus:
+  poll_jobs_channel_size: 100
+  metric_results_channel_size: 100
+  cache_events_channel_size: 50
+  state_signal_channel_size: 50
+  discovery_events_channel_size: 50
+
 # Logging
 logging:
   level: "info"
