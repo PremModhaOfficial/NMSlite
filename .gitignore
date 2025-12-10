@@ -20,6 +20,11 @@ Thumbs.db
 
 # Binary
 *.exe
+server
 
 # Archive directory (documentation, reports)
 archive/
+
+# SQLC Generated Code
+internal/database/db_gen/
+.context

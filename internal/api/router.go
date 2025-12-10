@@ -1,17 +1,19 @@
 package api
 
 import (
+	"database/sql"
 	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/nmslite/nmslite/internal/auth"
 	"github.com/nmslite/nmslite/internal/config"
+	"github.com/nmslite/nmslite/internal/database/db_gen"
 	"github.com/nmslite/nmslite/internal/middleware"
 )
 
 // Router creates and configures the API router
-func NewRouter(cfg *config.Config, authService *auth.Service, logger *slog.Logger) http.Handler {
+func NewRouter(cfg *config.Config, authService *auth.Service, logger *slog.Logger, db *sql.DB) http.Handler {
 	r := chi.NewRouter()
 
 	// Global middleware
@@ -32,9 +34,9 @@ func NewRouter(cfg *config.Config, authService *auth.Service, logger *slog.Logge
 	// Initialize handlers
 	healthHandler := NewHealthHandler()
 	authHandler := NewAuthHandler(authService)
-	credentialHandler := NewCredentialHandler()
-	discoveryHandler := NewDiscoveryHandler()
-	monitorHandler := NewMonitorHandler()
+	credentialHandler := NewCredentialHandler(db_gen.New(db), authService)
+	discoveryHandler := NewDiscoveryHandler(db_gen.New(db), authService)
+	monitorHandler := NewMonitorHandler(db_gen.New(db))
 	protocolHandler := NewProtocolHandler()
 
 	// Public routes (no auth required)
@@ -67,13 +69,14 @@ func NewRouter(cfg *config.Config, authService *auth.Service, logger *slog.Logge
 				r.Put("/{id}", discoveryHandler.Update)
 				r.Delete("/{id}", discoveryHandler.Delete)
 				r.Post("/{id}/run", discoveryHandler.Run)
+				r.Get("/{id}/results", discoveryHandler.GetResults)
 				r.Get("/{id}/jobs/{job_id}", discoveryHandler.GetJob)
 			})
 
 			// Monitors (Devices)
 			r.Route("/monitors", func(r chi.Router) {
 				r.Get("/", monitorHandler.List)
-				r.Post("/", monitorHandler.Create)
+				// r.Post("/", monitorHandler.Create) // Monitors are created via discovery
 				r.Get("/{id}", monitorHandler.Get)
 				r.Patch("/{id}", monitorHandler.Update)
 				r.Delete("/{id}", monitorHandler.Delete)

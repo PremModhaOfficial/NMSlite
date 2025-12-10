@@ -18,8 +18,6 @@ import (
 )
 
 func main() {
-	ctx := context.Background()
-
 	// Load configuration
 	cfg, err := config.Load("config.yaml")
 	if err != nil {
@@ -33,6 +31,21 @@ func main() {
 		"host", cfg.Server.Host,
 		"port", cfg.Server.Port,
 	)
+	// TODO: Initialize poller
+	// TODO: Initialize plugin manager
+
+	// Initialize database connection
+	db, err := database.InitDB(cfg)
+	if err != nil {
+		log.Fatalf("DB init failed: %v", err)
+	}
+	defer database.Close()
+
+	// Run embedded migrations (compiled into the binary)
+	err = database.RunMigrations()
+	if err != nil {
+		log.Fatalf("Migrations failed: %v", err)
+	}
 
 	// Initialize authentication service
 	authService, err := auth.NewService(
@@ -46,24 +59,8 @@ func main() {
 		log.Fatalf("Failed to initialize auth service: %v", err)
 	}
 
-	// Initialize database connection
-	_, err = database.InitDB(cfg)
-	if err != nil {
-		log.Fatalf("DB init failed: %v", err)
-	}
-	defer database.Close()
-
-	// Run embedded migrations (compiled into the binary)
-	err = database.RunMigrations()
-	if err != nil {
-		log.Fatalf("Migrations failed: %v", err)
-	}
-
-	// TODO: Initialize poller
-	// TODO: Initialize plugin manager
-
 	// Create API router
-	router := api.NewRouter(cfg, authService, logger)
+	router := api.NewRouter(cfg, authService, logger, db)
 
 	// Create HTTP server
 	srv := &http.Server{

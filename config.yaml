@@ -38,7 +38,7 @@ database:
 # Authentication & Security
 auth:
   admin_username: "admin"
-  admin_password: "Merp2310*"
+  admin_password: "Admin@123"
   jwt_secret: "99999999999999999999999999999999"
   jwt_expiry_hours: 24
   encryption_key: "99999999999999999999999999999999"

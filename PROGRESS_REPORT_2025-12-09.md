@@ -35,16 +35,7 @@
   | `internal/protocols/models.go` | [View](https://github.com/PremModhaOfficial/NMSlite/blob/9dec/internal/protocols/models.go) |
   | `internal/protocols/registry.go` | [View](https://github.com/PremModhaOfficial/NMSlite/blob/9dec/internal/protocols/registry.go) |
 
-- **Documentation (6 files)**
-
-  | File | Link |
-  |---|---|
-  | `README.md` | [View](https://github.com/PremModhaOfficial/NMSlite/blob/9dec/README.md) |
-  | `api/API_ENDPOINTS_DETAILED.md` | [View](https://github.com/PremModhaOfficial/NMSlite/blob/9dec/api/API_ENDPOINTS_DETAILED.md) |
-  | `docs/PROTOCOL_HANDLER_IMPLEMENTATION.md` | [View](https://github.com/PremModhaOfficial/NMSlite/blob/9dec/docs/PROTOCOL_HANDLER_IMPLEMENTATION.md) |
-  | `docs/PROTOCOL_QUICK_REFERENCE.md` | [View](https://github.com/PremModhaOfficial/NMSlite/blob/9dec/docs/PROTOCOL_QUICK_REFERENCE.md) |
-  | `internal/database/migrations/20251209115838_init_schema.sql` | [View](https://github.com/PremModhaOfficial/NMSlite/blob/9dec/internal/database/migrations/20251209115838_init_schema.sql) |
-  | `internal/protocols/registry_test.go` | [View](https://github.com/PremModhaOfficial/NMSlite/blob/9dec/internal/protocols/registry_test.go) |
+---
 
 - **Configuration (6 files)**
 
@@ -55,17 +46,6 @@
   | `api/NMSlite.postman_collection.json` | [View](https://github.com/PremModhaOfficial/NMSlite/blob/9dec/api/NMSlite.postman_collection.json) |
   | `internal/database/migrations.go` | [View](https://github.com/PremModhaOfficial/NMSlite/blob/9dec/internal/database/migrations.go) |
   | `internal/database/database.go` | [View](https://github.com/PremModhaOfficial/NMSlite/blob/9dec/internal/database/database.go) |
-  | `.gitignore` | [View](https://github.com/PremModhaOfficial/NMSlite/blob/9dec/.gitignore) |
-
----
-
-## Summary
-
-| Metric | Count |
-|---|---|
-| Files Created | 23 |
-| Files Modified | 5 |
-| Total Changes | 28 |
 
 ---
 
@@ -78,5 +58,3 @@
 - [Protocol Docs](https://github.com/PremModhaOfficial/NMSlite/blob/9dec/docs/PROTOCOL_HANDLER_IMPLEMENTATION.md)
 
 ---
-
-**Generated:** 2025-12-09 | **Status:** All Pushed

@@ -71,7 +71,7 @@ A definition of a "Scanning Job."
 ## 3. Monitor Provisioning (Device)
 
 **What it is:**
-The authoritative record of a monitored asset. It represents the successful "binding" of a specific physical/virtual asset to a specific Plugin and Credential Profile. This is the entity against which metrics are stored.
+The authoritative record of a monitored asset. It represents the successful "binding" of a specific physical/virtual asset to a specific Plugin and Credential Profile. Monitors are exclusively provisioned through the Device Discovery process (see Section 2). This is the entity against which metrics are stored.
 
 **What it is comprised of:**
 *   **Identity:** Hostname, IP Address, and a system-generated UUID.
@@ -115,6 +115,7 @@ The association is determined during the **Discovery Phase** (see Section 2).
   "credential_profile_id": "uuid-cred-1",
   "discovery_profile_id": "uuid-discovery-1",
   "polling_interval_seconds": 60,
+  "port": 15985, // The port on which the device was discovered and is monitored
   "status": "active",
   "deleted_at": null
 }
@@ -1092,7 +1093,6 @@ readinessProbe:
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
 | `/monitors` | GET | JWT | List all monitors (excludes soft-deleted) |
-| `/monitors` | POST | JWT | Manually create a monitor |
 | `/monitors/{id}` | GET | JWT | Get monitor by ID |
 | `/monitors/{id}` | PATCH | JWT | Update monitor (including status) |
 | `/monitors/{id}` | DELETE | JWT | Soft delete monitor |

@@ -1,0 +1,9 @@
+{"time":"2025-12-10T12:58:13.669673281+05:30","level":"INFO","msg":"Starting NMS Lite Server","version":"1.0.0","host":"0.0.0.0","port":8080}
+2025/12/10 12:58:13 goose: no migrations to run. current version: 20251210130000
+{"time":"2025-12-10T12:58:13.689678234+05:30","level":"INFO","msg":"HTTP server listening","addr":"0.0.0.0:8080"}
+{"time":"2025-12-10T12:58:27.897021565+05:30","level":"INFO","msg":"Request completed","request_id":"8cd048ea-8f49-4f12-9eb9-1620be1840b3","method":"POST","path":"/api/v1/login","status":200,"duration_ms":0,"user":"","ip":"[::1]:46800"}
+{"time":"2025-12-10T12:58:27.909635095+05:30","level":"INFO","msg":"Request completed","request_id":"9c10bc41-24db-4818-8c61-89abd4eda924","method":"GET","path":"/api/v1/credentials","status":200,"duration_ms":1,"user":"","ip":"[::1]:46810"}
+{"time":"2025-12-10T12:58:27.948849976+05:30","level":"INFO","msg":"Request completed","request_id":"8d6a0e04-8630-4532-9d21-5565aa7f44e8","method":"POST","path":"/api/v1/discoveries","status":201,"duration_ms":29,"user":"","ip":"[::1]:46820"}
+{"time":"2025-12-10T12:58:27.966307641+05:30","level":"INFO","msg":"Request completed","request_id":"c701a6ac-f5dd-401f-bac2-60cf34d3ea09","method":"POST","path":"/api/v1/discoveries/ed73a597-a2c8-456d-bf26-740ad08a1b98/run","status":200,"duration_ms":6,"user":"","ip":"[::1]:46834"}
+{"time":"2025-12-10T12:58:27.97649902+05:30","level":"INFO","msg":"Request completed","request_id":"02ff45a6-76f4-41c0-b0f8-ed50947cc880","method":"GET","path":"/api/v1/discoveries/ed73a597-a2c8-456d-bf26-740ad08a1b98/results","status":200,"duration_ms":1,"user":"","ip":"[::1]:46840"}
+{"time":"2025-12-10T12:58:27.987555257+05:30","level":"INFO","msg":"Request completed","request_id":"b6728cc4-53b9-411e-b42b-c46eebd68b48","method":"GET","path":"/api/v1/monitors","status":200,"duration_ms":1,"user":"","ip":"[::1]:46850"}
