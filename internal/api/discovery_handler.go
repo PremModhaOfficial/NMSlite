@@ -1,15 +1,16 @@
 package api
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
-
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nmslite/nmslite/internal/auth"
 	"github.com/nmslite/nmslite/internal/channels"
 	"github.com/nmslite/nmslite/internal/database/db_gen"
@@ -17,15 +18,17 @@ import (
 
 // DiscoveryHandler handles discovery profile endpoints
 type DiscoveryHandler struct {
+	pool        *pgxpool.Pool
 	q           db_gen.Querier
 	authService *auth.Service
 	events      *channels.EventChannels
 }
 
 // NewDiscoveryHandler creates a new discovery handler
-func NewDiscoveryHandler(q db_gen.Querier, authService *auth.Service, events *channels.EventChannels) *DiscoveryHandler {
+func NewDiscoveryHandler(pool *pgxpool.Pool, authService *auth.Service, events *channels.EventChannels) *DiscoveryHandler {
 	return &DiscoveryHandler{
-		q:           q,
+		pool:        pool,
+		q:           db_gen.New(pool),
 		authService: authService,
 		events:      events,
 	}
@@ -62,6 +65,7 @@ func (h *DiscoveryHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Ports                json.RawMessage `json:"ports"`
 		PortScanTimeoutMs    int32           `json:"port_scan_timeout_ms"`
 		CredentialProfileIDs json.RawMessage `json:"credential_profile_ids"`
+		AutoProvision        bool            `json:"auto_provision"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -86,8 +90,9 @@ func (h *DiscoveryHandler) Create(w http.ResponseWriter, r *http.Request) {
 		TargetType:           input.TargetType,
 		TargetValue:          encryptedTarget,
 		Ports:                input.Ports,
-		PortScanTimeoutMs:    sql.NullInt32{Int32: input.PortScanTimeoutMs, Valid: input.PortScanTimeoutMs > 0},
+		PortScanTimeoutMs:    pgtype.Int4{Int32: input.PortScanTimeoutMs, Valid: input.PortScanTimeoutMs > 0},
 		CredentialProfileIds: input.CredentialProfileIDs,
+		AutoProvision:        pgtype.Bool{Bool: input.AutoProvision, Valid: true},
 	}
 
 	profile, err := h.q.CreateDiscoveryProfile(r.Context(), params)
@@ -113,7 +118,7 @@ func (h *DiscoveryHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	profile, err := h.q.GetDiscoveryProfile(r.Context(), id)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, pgx.ErrNoRows) {
 			sendError(w, r, http.StatusNotFound, "NOT_FOUND", "Discovery profile not found", nil)
 			return
 		}
@@ -165,13 +170,13 @@ func (h *DiscoveryHandler) Update(w http.ResponseWriter, r *http.Request) {
 		TargetType:           input.TargetType,
 		TargetValue:          encryptedTarget,
 		Ports:                input.Ports,
-		PortScanTimeoutMs:    sql.NullInt32{Int32: input.PortScanTimeoutMs, Valid: input.PortScanTimeoutMs > 0},
+		PortScanTimeoutMs:    pgtype.Int4{Int32: input.PortScanTimeoutMs, Valid: input.PortScanTimeoutMs > 0},
 		CredentialProfileIds: input.CredentialProfileIDs,
 	}
 
 	profile, err := h.q.UpdateDiscoveryProfile(r.Context(), params)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, pgx.ErrNoRows) {
 			sendError(w, r, http.StatusNotFound, "NOT_FOUND", "Discovery profile not found", nil)
 			return
 		}
@@ -204,7 +209,7 @@ func (h *DiscoveryHandler) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 // Run handles POST /api/v1/discoveries/{id}/run
-// Returns 202 Accepted immediately with a job_id for async polling
+// Returns 202 Accepted immediately - discovery runs asynchronously
 func (h *DiscoveryHandler) Run(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")
 	id, err := uuid.Parse(idStr)
@@ -220,12 +225,8 @@ func (h *DiscoveryHandler) Run(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2. Generate unique job ID for this discovery run
-	jobID := uuid.New()
-
-	// 3. Publish discovery started event to typed channel
+	// 2. Publish discovery started event to typed channel
 	startedEvent := channels.DiscoveryStartedEvent{
-		JobID:     jobID,
 		ProfileID: id,
 		StartedAt: time.Now(),
 	}
@@ -242,7 +243,7 @@ func (h *DiscoveryHandler) Run(w http.ResponseWriter, r *http.Request) {
 		// In production, consider returning an error or using a timeout
 	}
 
-	// 4. Return 202 Accepted immediately
+	// 3. Return 202 Accepted immediately
 	// Suppress unused profile warning by using it
 	_ = profile
 	sendJSON(w, http.StatusAccepted, map[string]interface{}{

@@ -3,30 +3,33 @@ package discovery
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net"
+	"net/netip"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/nmslite/nmslite/internal/auth"
 	"github.com/nmslite/nmslite/internal/channels"
 	"github.com/nmslite/nmslite/internal/credentials"
 	"github.com/nmslite/nmslite/internal/database/db_gen"
 	"github.com/nmslite/nmslite/internal/plugins"
-	"github.com/sqlc-dev/pqtype"
 )
 
-// Worker processes discovery events asynchronously and manages job lifecycle.
+// Worker processes discovery events asynchronously.
 type Worker struct {
 	events      *channels.EventChannels
 	querier     db_gen.Querier
 	registry    plugins.PluginRegistry
 	executor    *plugins.Executor
 	credentials *credentials.Service
+	authService *auth.Service
 	logger      *slog.Logger
 
 	// runningMu protects runningProfiles
@@ -42,6 +45,7 @@ func NewWorker(
 	registry plugins.PluginRegistry,
 	executor *plugins.Executor,
 	credentials *credentials.Service,
+	authService *auth.Service,
 	logger *slog.Logger,
 ) *Worker {
 	return &Worker{
@@ -50,6 +54,7 @@ func NewWorker(
 		registry:        registry,
 		executor:        executor,
 		credentials:     credentials,
+		authService:     authService,
 		logger:          logger,
 		runningProfiles: make(map[uuid.UUID]bool),
 	}
@@ -83,9 +88,7 @@ func (w *Worker) Run(ctx context.Context) error {
 
 // handleDiscoveryStartedEvent processes a single discovery start event.
 func (w *Worker) handleDiscoveryStartedEvent(ctx context.Context, event channels.DiscoveryStartedEvent) {
-	jobID := event.JobID.String()
 	logger := w.logger.With(
-		slog.String("job_id", jobID),
 		slog.String("profile_id", event.ProfileID.String()),
 		slog.String("started_at", event.StartedAt.Format(time.RFC3339)),
 	)
@@ -104,7 +107,7 @@ func (w *Worker) handleDiscoveryStartedEvent(ctx context.Context, event channels
 	// Validate discovery profile exists
 	profile, err := w.querier.GetDiscoveryProfile(ctx, event.ProfileID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, pgx.ErrNoRows) {
 			logger.ErrorContext(ctx, "Discovery profile not found",
 				slog.String("error", err.Error()),
 			)
@@ -148,8 +151,8 @@ func (w *Worker) handleDiscoveryStartedEvent(ctx context.Context, event channels
 	// Update discovery profile status in database
 	updateErr := w.querier.UpdateDiscoveryProfileStatus(ctx, db_gen.UpdateDiscoveryProfileStatusParams{
 		ID:                profile.ID,
-		LastRunStatus:     sql.NullString{String: status, Valid: true},
-		DevicesDiscovered: sql.NullInt32{Int32: int32(monitorCount), Valid: true},
+		LastRunStatus:     pgtype.Text{String: status, Valid: true},
+		DevicesDiscovered: pgtype.Int4{Int32: int32(monitorCount), Valid: true},
 	})
 	if updateErr != nil {
 		logger.ErrorContext(ctx, "Failed to update discovery profile status",
@@ -188,7 +191,15 @@ func (w *Worker) executeDiscovery(
 	}
 
 	// Decrypt target value
-	decryptedTarget := profile.TargetValue // TODO: Add decryption when auth service available
+	decryptedTarget := profile.TargetValue
+	if decrypted, err := w.authService.Decrypt(profile.TargetValue); err == nil {
+		decryptedTarget = string(decrypted)
+	} else {
+		// If decryption fails, log it but try using raw value (backward compatibility or unencrypted)
+		logger.WarnContext(ctx, "Failed to decrypt target value, using raw value",
+			slog.String("error", err.Error()),
+		)
+	}
 
 	// Get port scan timeout, default to 1 second if not set
 	timeout := time.Duration(1000) * time.Millisecond
@@ -206,7 +217,7 @@ func (w *Worker) executeDiscovery(
 		}
 
 		// 2a. TCP liveness check
-		if !w.isPortOpen(ctx, decryptedTarget, port, timeout) {
+		if !w.isPortOpen(ctx, decryptedTarget, port, timeout, logger) {
 			logger.DebugContext(ctx, "Port closed or unreachable",
 				slog.String("ip", decryptedTarget),
 				slog.Int("port", port),
@@ -220,12 +231,21 @@ func (w *Worker) executeDiscovery(
 		)
 
 		// 2b. Save to discovered_devices table
+		ipAddr, err := netip.ParseAddr(decryptedTarget)
+		if err != nil {
+			logger.ErrorContext(ctx, "Failed to parse IP address",
+				slog.String("ip", decryptedTarget),
+				slog.String("error", err.Error()),
+			)
+			continue
+		}
+
 		discoveredDevice, err := w.querier.CreateDiscoveredDevice(ctx, db_gen.CreateDiscoveredDeviceParams{
 			DiscoveryProfileID: uuid.NullUUID{UUID: profile.ID, Valid: true},
-			IpAddress:          pqtype.Inet{IPNet: net.IPNet{IP: net.ParseIP(decryptedTarget), Mask: net.CIDRMask(32, 32)}, Valid: true},
-			Hostname:           sql.NullString{Valid: false}, // null initially
+			IpAddress:          ipAddr,
+			Hostname:           pgtype.Text{Valid: false}, // null initially
 			Port:               int32(port),
-			Status:             sql.NullString{String: "new", Valid: true},
+			Status:             pgtype.Text{String: "new", Valid: true},
 		})
 
 		if err != nil {
@@ -267,14 +287,23 @@ func (w *Worker) executeDiscovery(
 			}
 
 			// Create monitor
+			ipAddr, err := netip.ParseAddr(decryptedTarget)
+			if err != nil {
+				logger.ErrorContext(ctx, "Failed to parse IP address for monitor",
+					slog.String("ip", decryptedTarget),
+					slog.String("error", err.Error()),
+				)
+				continue
+			}
+
 			_, err = w.querier.CreateMonitor(ctx, db_gen.CreateMonitorParams{
-				DisplayName:         sql.NullString{Valid: false}, // Will be populated during polling
-				Hostname:            sql.NullString{Valid: false}, // Will be populated during polling
-				IpAddress:           pqtype.Inet{IPNet: net.IPNet{IP: net.ParseIP(decryptedTarget), Mask: net.CIDRMask(32, 32)}, Valid: true},
+				DisplayName:         pgtype.Text{Valid: false}, // Will be populated during polling
+				Hostname:            pgtype.Text{Valid: false}, // Will be populated during polling
+				IpAddress:           ipAddr,
 				PluginID:            plugin.Manifest.ID,
 				CredentialProfileID: uuid.NullUUID{UUID: credID, Valid: true},
 				DiscoveryProfileID:  uuid.NullUUID{UUID: profile.ID, Valid: true},
-				Port:                sql.NullInt32{Int32: int32(port), Valid: true},
+				Port:                pgtype.Int4{Int32: int32(port), Valid: true},
 			})
 
 			if err != nil {
@@ -288,7 +317,7 @@ func (w *Worker) executeDiscovery(
 			// Update discovered_device status to "provisioned"
 			err = w.querier.UpdateDiscoveredDeviceStatus(ctx, db_gen.UpdateDiscoveredDeviceStatusParams{
 				ID:     discoveredDevice.ID,
-				Status: sql.NullString{String: "provisioned", Valid: true},
+				Status: pgtype.Text{String: "provisioned", Valid: true},
 			})
 
 			if err != nil {
@@ -311,7 +340,7 @@ func (w *Worker) executeDiscovery(
 }
 
 // isPortOpen checks if a TCP port is open on the target
-func (w *Worker) isPortOpen(ctx context.Context, target string, port int, timeout time.Duration) bool {
+func (w *Worker) isPortOpen(ctx context.Context, target string, port int, timeout time.Duration, logger *slog.Logger) bool {
 	address := fmt.Sprintf("%s:%d", target, port)
 
 	scanCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -319,6 +348,10 @@ func (w *Worker) isPortOpen(ctx context.Context, target string, port int, timeou
 
 	conn, err := (&net.Dialer{}).DialContext(scanCtx, "tcp", address)
 	if err != nil {
+		logger.DebugContext(ctx, "Dial failed",
+			slog.String("address", address),
+			slog.String("error", err.Error()),
+		)
 		return false
 	}
 	conn.Close()
@@ -334,7 +367,6 @@ func (w *Worker) publishCompletedEvent(
 	_ string, // error message (reserved for future use)
 ) {
 	completedEvent := channels.DiscoveryCompletedEvent{
-		JobID:        event.JobID,
 		ProfileID:    event.ProfileID,
 		Status:       statusStr, // "success", "partial", "failed"
 		DevicesFound: deviceCount,
@@ -346,18 +378,18 @@ func (w *Worker) publishCompletedEvent(
 	select {
 	case w.events.DiscoveryCompleted <- completedEvent:
 		w.logger.DebugContext(ctx, "Published discovery completed event",
-			slog.String("job_id", event.JobID.String()),
+			slog.String("profile_id", event.ProfileID.String()),
 			slog.String("status", statusStr),
 			slog.Int("devices_found", deviceCount),
 		)
 	case <-ctx.Done():
 		w.logger.WarnContext(ctx, "Context cancelled while publishing completion event",
-			slog.String("job_id", event.JobID.String()),
+			slog.String("profile_id", event.ProfileID.String()),
 		)
 	default:
 		// Channel full - log warning
 		w.logger.WarnContext(ctx, "DiscoveryCompleted channel full, event dropped",
-			slog.String("job_id", event.JobID.String()),
+			slog.String("profile_id", event.ProfileID.String()),
 			slog.String("status", statusStr),
 		)
 	}

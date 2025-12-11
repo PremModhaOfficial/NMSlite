@@ -33,6 +33,7 @@ SET
     credential_profile_id = $6,
     polling_interval_seconds = $7,
     port = $8,
+    status = $9,
     updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL
 RETURNING *;

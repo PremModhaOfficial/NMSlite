@@ -45,12 +45,6 @@
 			"value": "",
 			"type": "string",
 			"description": "Monitor ID"
-		},
-		{
-			"key": "job_id",
-			"value": "",
-			"type": "string",
-			"description": "Discovery Job ID"
 		}
 	],
 	"item": [
@@ -783,7 +777,7 @@
 						"method": "POST",
 						"header": [],
 						"url": "{{base_url}}/api/v1/discoveries/{{discovery_id}}/run",
-						"description": "Trigger an asynchronous discovery scan. Returns immediately with a job_id."
+						"description": "Trigger an asynchronous discovery scan. Returns immediately with 202 Accepted."
 					},
 					"response": [],
 					"event": [
@@ -795,25 +789,15 @@
 									"    pm.response.to.have.status(202);",
 									"});",
 									"",
-									"pm.test('Response has job_id', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.job_id).to.exist;",
-									"});",
-									"",
 									"pm.test('Response has status', function () {",
 									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.status).to.exist;",
+									"    pm.expect(jsonData.status).to.equal('accepted');",
 									"});",
 									"",
-									"// Extract and save job_id",
-									"if (pm.response.code === 202) {",
+									"pm.test('Response has profile_id', function () {",
 									"    const jsonData = pm.response.json();",
-									"    if (jsonData.job_id) {",
-									"        pm.collectionVariables.set('job_id', jsonData.job_id);",
-									"        pm.environment.set('job_id', jsonData.job_id);",
-									"        console.log('Job ID saved:', jsonData.job_id);",
-									"    }",
-									"}"
+									"    pm.expect(jsonData.profile_id).to.exist;",
+									"});"
 								],
 								"type": "text/javascript"
 							}
@@ -836,40 +820,6 @@
 								"exec": [
 									"pm.test('Status code is 200', function () {",
 									"    pm.response.to.have.status(200);",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "Get Discovery Job Status",
-					"request": {
-						"method": "GET",
-						"header": [],
-						"url": "{{base_url}}/api/v1/discoveries/{{discovery_id}}/jobs/{{job_id}}",
-						"description": "Get the status of a specific discovery job. Poll this endpoint to track progress."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test('Status code is 200', function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test('Response has job_id', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.job_id).to.exist;",
-									"});",
-									"",
-									"pm.test('Response has status', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.status).to.exist;",
-									"    pm.expect(jsonData.status).to.be.oneOf(['pending', 'running', 'completed', 'failed', 'cancelled']);",
 									"});"
 								],
 								"type": "text/javascript"
@@ -1139,6 +1089,90 @@
 							}
 						}
 					]
+				},
+				{
+					"name": "Query Metrics",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"start\": \"2025-12-11T00:00:00Z\",\n    \"end\": \"2025-12-11T12:00:00Z\",\n    \"metric_groups\": [\"host.cpu\", \"host.memory\"],\n    \"tag_filters\": [\n        {\n            \"key\": \"core\",\n            \"op\": \"in\",\n            \"values\": [\"0\", \"1\", \"2\", \"3\"]\n        },\n        {\n            \"key\": \"type\",\n            \"op\": \"eq\",\n            \"values\": [\"user\"]\n        }\n    ],\n    \"limit\": 500,\n    \"latest\": false\n}"
+						},
+						"url": "{{base_url}}/api/v1/monitors/{{monitor_id}}/metrics/query",
+						"description": "Query metrics with dynamic filters and advanced filtering capabilities.\n\n**Purpose:**\nThis endpoint allows you to query metrics with fine-grained control over time ranges, metric groups, and tag-based filtering. It's designed for flexible metric retrieval with support for complex filtering scenarios.\n\n**Supported Operators:**\n- `eq` - Equals (exact match)\n- `in` - In list (matches any value in the provided array)\n- `like` - SQL LIKE pattern matching (% wildcards supported)\n- `exists` - Tag key exists (values array can be empty)\n- `gt` - Greater than (numeric comparison)\n- `lt` - Less than (numeric comparison)\n- `gte` - Greater than or equal to (numeric comparison)\n- `lte` - Less than or equal to (numeric comparison)\n\n**Parameters:**\n- `start` (required): ISO 8601 timestamp for query start time\n- `end` (required): ISO 8601 timestamp for query end time\n- `metric_groups` (optional): Array of metric group names to filter by (e.g., [\"host.cpu\", \"host.memory\"])\n- `tag_filters` (optional): Array of tag filter objects with `key`, `op`, and `values` fields\n- `limit` (optional): Maximum number of metrics to return (default: 100, max: 1000)\n- `latest` (optional): If true, returns only the most recent metric per metric_group (default: false)\n\n**Example Use Cases:**\n1. Get all CPU metrics for specific cores: Use `op: \"in\"` with core IDs\n2. Get metrics for a specific type: Use `op: \"eq\"` for exact match\n3. Get metrics where a tag exists: Use `op: \"exists\"`\n4. Get metrics with numeric filtering: Use `op: \"gt\"`, `\"lt\"`, `\"gte\"`, or `\"lte\"`\n5. Get latest metrics only: Set `latest: true`"
+					},
+					"response": [
+						{
+							"name": "Successful Query",
+							"originalRequest": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									},
+									{
+										"key": "Authorization",
+										"value": "Bearer {{token}}"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n    \"start\": \"2025-12-11T00:00:00Z\",\n    \"end\": \"2025-12-11T12:00:00Z\",\n    \"metric_groups\": [\"host.cpu\", \"host.memory\"],\n    \"tag_filters\": [\n        {\n            \"key\": \"core\",\n            \"op\": \"in\",\n            \"values\": [\"0\", \"1\", \"2\", \"3\"]\n        },\n        {\n            \"key\": \"type\",\n            \"op\": \"eq\",\n            \"values\": [\"user\"]\n        }\n    ],\n    \"limit\": 500,\n    \"latest\": false\n}"
+								},
+								"url": "{{base_url}}/api/v1/monitors/{{monitor_id}}/metrics/query"
+							},
+							"status": "OK",
+							"code": 200,
+							"_postman_previewlanguage": "json",
+							"header": [
+								{
+									"key": "Content-Type",
+									"value": "application/json"
+								}
+							],
+							"cookie": [],
+							"body": "{\n    \"metrics\": [\n        {\n            \"id\": 1234,\n            \"monitor_id\": \"mon_abc123\",\n            \"metric_group\": \"host.cpu\",\n            \"metric_name\": \"usage_percent\",\n            \"value\": 45.2,\n            \"unit\": \"percent\",\n            \"timestamp\": \"2025-12-11T10:30:00Z\",\n            \"tags\": {\n                \"core\": \"0\",\n                \"type\": \"user\"\n            }\n        },\n        {\n            \"id\": 1235,\n            \"monitor_id\": \"mon_abc123\",\n            \"metric_group\": \"host.memory\",\n            \"metric_name\": \"usage_percent\",\n            \"value\": 67.8,\n            \"unit\": \"percent\",\n            \"timestamp\": \"2025-12-11T10:30:00Z\",\n            \"tags\": {\n                \"type\": \"physical\"\n            }\n        }\n    ],\n    \"total\": 2,\n    \"limit\": 500,\n    \"query\": {\n        \"start\": \"2025-12-11T00:00:00Z\",\n        \"end\": \"2025-12-11T12:00:00Z\",\n        \"metric_groups\": [\"host.cpu\", \"host.memory\"],\n        \"tag_filters\": [\n            {\n                \"key\": \"core\",\n                \"op\": \"in\",\n                \"values\": [\"0\", \"1\", \"2\", \"3\"]\n            },\n            {\n                \"key\": \"type\",\n                \"op\": \"eq\",\n                \"values\": [\"user\"]\n            }\n        ],\n        \"latest\": false\n    }\n}"
+						}
+					],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test('Response has metrics array', function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.metrics).to.be.an('array');",
+									"});",
+									"",
+									"pm.test('Response has total count', function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.total).to.exist;",
+									"});",
+									"",
+									"pm.test('Response has query object', function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.query).to.exist;",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
 				}
 			]
 		},
@@ -1153,98 +1187,6 @@
 						"header": [],
 						"url": "{{base_url}}/api/v1/protocols",
 						"description": "List all supported protocols with their metadata (default ports, transport type, etc.)."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test('Status code is 200', function () {",
-									"    pm.response.to.have.status(200);",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "Get Protocol Schema (SSH)",
-					"request": {
-						"method": "GET",
-						"header": [],
-						"url": "{{base_url}}/api/v1/protocols/ssh/schema",
-						"description": "Get the JSON schema for SSH protocol credentials."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test('Status code is 200', function () {",
-									"    pm.response.to.have.status(200);",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "Get Protocol Schema (WinRM)",
-					"request": {
-						"method": "GET",
-						"header": [],
-						"url": "{{base_url}}/api/v1/protocols/winrm/schema",
-						"description": "Get the JSON schema for WinRM protocol credentials."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test('Status code is 200', function () {",
-									"    pm.response.to.have.status(200);",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "Get Protocol Schema (SNMP v2c)",
-					"request": {
-						"method": "GET",
-						"header": [],
-						"url": "{{base_url}}/api/v1/protocols/snmp-v2c/schema",
-						"description": "Get the JSON schema for SNMP v2c protocol credentials."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test('Status code is 200', function () {",
-									"    pm.response.to.have.status(200);",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "Get Protocol Schema (SNMP v3)",
-					"request": {
-						"method": "GET",
-						"header": [],
-						"url": "{{base_url}}/api/v1/protocols/snmp-v3/schema",
-						"description": "Get the JSON schema for SNMP v3 protocol credentials."
 					},
 					"response": [],
 					"event": [

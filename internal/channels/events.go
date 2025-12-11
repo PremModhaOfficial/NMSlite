@@ -9,16 +9,14 @@ import (
 	"github.com/google/uuid"
 )
 
-// DiscoveryStartedEvent is published when a discovery job begins execution
+// DiscoveryStartedEvent is published when a discovery begins execution
 type DiscoveryStartedEvent struct {
-	JobID     uuid.UUID
 	ProfileID uuid.UUID
 	StartedAt time.Time
 }
 
-// DiscoveryCompletedEvent is published when a discovery job finishes
+// DiscoveryCompletedEvent is published when a discovery finishes
 type DiscoveryCompletedEvent struct {
-	JobID        uuid.UUID
 	ProfileID    uuid.UUID
 	Status       string // "success", "partial", "failed"
 	DevicesFound int

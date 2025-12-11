@@ -1,41 +1,32 @@
 package api
 
 import (
-	"database/sql"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 
-	"net"
-
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/nmslite/nmslite/internal/database"
 	"github.com/nmslite/nmslite/internal/database/db_gen"
-	"github.com/sqlc-dev/pqtype"
 )
-
-// Helper to convert string IP to pqtype.Inet
-func stringToInet(ipStr string) (pqtype.Inet, error) {
-	ip := net.ParseIP(ipStr)
-	if ip == nil {
-		return pqtype.Inet{}, net.InvalidAddrError("invalid IP address")
-	}
-	// Determine mask based on IP version (optional, but good for completeness)
-	mask := 32
-	if ip.To4() == nil {
-		mask = 128
-	}
-	return pqtype.Inet{IPNet: net.IPNet{IP: ip, Mask: net.CIDRMask(mask, mask)}, Valid: true}, nil
-}
 
 // MonitorHandler handles monitor (device) endpoints
 type MonitorHandler struct {
-	q db_gen.Querier
+	pool *pgxpool.Pool
+	q    db_gen.Querier
 }
 
 // NewMonitorHandler creates a new monitor handler
-func NewMonitorHandler(q db_gen.Querier) *MonitorHandler {
-	return &MonitorHandler{q: q}
+func NewMonitorHandler(pool *pgxpool.Pool) *MonitorHandler {
+	return &MonitorHandler{
+		pool: pool,
+		q:    db_gen.New(pool),
+	}
 }
 
 // List handles GET /api/v1/monitors
@@ -63,7 +54,7 @@ func (h *MonitorHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	monitor, err := h.q.GetMonitor(r.Context(), id)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, pgx.ErrNoRows) {
 			sendError(w, r, http.StatusNotFound, "NOT_FOUND", "Monitor not found", nil)
 			return
 		}
@@ -91,6 +82,7 @@ func (h *MonitorHandler) Update(w http.ResponseWriter, r *http.Request) {
 		CredentialProfileID    string `json:"credential_profile_id"`
 		PollingIntervalSeconds int32  `json:"polling_interval_seconds"`
 		Port                   int32  `json:"port"`
+		Status                 string `json:"status"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -101,7 +93,7 @@ func (h *MonitorHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// Get existing to merge
 	existing, err := h.q.GetMonitor(r.Context(), id)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, pgx.ErrNoRows) {
 			sendError(w, r, http.StatusNotFound, "NOT_FOUND", "Monitor not found", nil)
 			return
 		}
@@ -119,17 +111,18 @@ func (h *MonitorHandler) Update(w http.ResponseWriter, r *http.Request) {
 		CredentialProfileID:    existing.CredentialProfileID,
 		PollingIntervalSeconds: existing.PollingIntervalSeconds,
 		Port:                   existing.Port,
+		Status:                 existing.Status,
 	}
 
 	// Apply updates
 	if input.DisplayName != "" {
-		params.DisplayName = sql.NullString{String: input.DisplayName, Valid: true}
+		params.DisplayName = pgtype.Text{String: input.DisplayName, Valid: true}
 	}
 	if input.Hostname != "" {
-		params.Hostname = sql.NullString{String: input.Hostname, Valid: true}
+		params.Hostname = pgtype.Text{String: input.Hostname, Valid: true}
 	}
 	if input.IPAddress != "" {
-		ipInet, err := stringToInet(input.IPAddress)
+		ipInet, err := database.StringToInet(input.IPAddress)
 		if err != nil {
 			sendError(w, r, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid IP Address", err)
 			return
@@ -145,10 +138,13 @@ func (h *MonitorHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if input.PollingIntervalSeconds > 0 {
-		params.PollingIntervalSeconds = sql.NullInt32{Int32: input.PollingIntervalSeconds, Valid: true}
+		params.PollingIntervalSeconds = pgtype.Int4{Int32: input.PollingIntervalSeconds, Valid: true}
 	}
 	if input.Port > 0 {
-		params.Port = sql.NullInt32{Int32: input.Port, Valid: true}
+		params.Port = pgtype.Int4{Int32: input.Port, Valid: true}
+	}
+	if input.Status != "" {
+		params.Status = pgtype.Text{String: input.Status, Valid: true}
 	}
 
 	monitor, err := h.q.UpdateMonitor(r.Context(), params)
@@ -184,8 +180,75 @@ func (h *MonitorHandler) Restore(w http.ResponseWriter, r *http.Request) {
 	sendError(w, r, http.StatusNotImplemented, "NOT_IMPLEMENTED", "This endpoint is not yet implemented", nil)
 }
 
-// GetMetrics handles GET /api/v1/monitors/{id}/metrics
-func (h *MonitorHandler) GetMetrics(w http.ResponseWriter, r *http.Request) {
-	// TODO: Implement metrics retrieval
-	sendError(w, r, http.StatusNotImplemented, "NOT_IMPLEMENTED", "This endpoint is not yet implemented", nil)
+// QueryMetrics handles POST /api/v1/metrics/query
+// Accepts batch device_ids in request body, returns grouped results
+func (h *MonitorHandler) QueryMetrics(w http.ResponseWriter, r *http.Request) {
+	// Parse request body
+	var req MetricsQueryRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendError(w, r, http.StatusBadRequest, "INVALID_BODY", "Invalid JSON body", err)
+		return
+	}
+
+	// Validate device_ids not empty
+	if len(req.DeviceIDs) == 0 {
+		sendError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "device_ids array cannot be empty", nil)
+		return
+	}
+
+	// Validate monitors exist in a single query
+	validDeviceIDs, err := h.validateMonitorIDs(r.Context(), req.DeviceIDs)
+	if err != nil {
+		sendError(w, r, http.StatusInternalServerError, "DB_ERROR", "Failed to validate device IDs", err)
+		return
+	}
+
+	// If no valid devices, return empty result with all requested IDs showing empty arrays
+	if len(validDeviceIDs) == 0 {
+		emptyData := make(map[string][]MetricRow)
+		for _, id := range req.DeviceIDs {
+			emptyData[id.String()] = []MetricRow{}
+		}
+		response := &BatchMetricsQueryResponse{
+			Data:  emptyData,
+			Count: 0,
+		}
+		sendJSON(w, http.StatusOK, response)
+		return
+	}
+
+	// Execute query with valid device IDs
+	response, err := ExecuteMetricsQuery(r.Context(), h.pool, validDeviceIDs, req)
+	if err != nil {
+		sendError(w, r, http.StatusInternalServerError, "QUERY_ERROR", "Failed to query metrics", err)
+		return
+	}
+
+	sendJSON(w, http.StatusOK, response)
+}
+
+// validateMonitorIDs validates monitor IDs exist in a single DB query
+// Returns only the IDs that exist and are not soft-deleted
+func (h *MonitorHandler) validateMonitorIDs(ctx context.Context, ids []uuid.UUID) ([]uuid.UUID, error) {
+	query := `SELECT id FROM monitors WHERE id = ANY($1) AND deleted_at IS NULL`
+	rows, err := h.pool.Query(ctx, query, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	validIDs := make([]uuid.UUID, 0, len(ids))
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		validIDs = append(validIDs, id)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return validIDs, nil
 }

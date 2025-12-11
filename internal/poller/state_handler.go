@@ -3,7 +3,6 @@ package poller
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -11,21 +10,43 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nmslite/nmslite/internal/channels"
 	"github.com/nmslite/nmslite/internal/database/db_gen"
 )
 
+// SchedulerInterface is the interface that the scheduler must implement
+type SchedulerInterface interface {
+	AddMonitor(sm *ScheduledMonitor)
+}
+
+// Scheduler is a placeholder type for the actual scheduler implementation
+type Scheduler = SchedulerImpl
+
 // MonitorCache represents an in-memory cache of active monitors being polled.
 // It is protected by a mutex for concurrent access.
 type MonitorCache struct {
-	mu       sync.RWMutex
-	monitors map[uuid.UUID]*db_gen.Monitor
+	mu        sync.RWMutex
+	monitors  map[uuid.UUID]*ScheduledMonitor
+	scheduler SchedulerInterface
+}
+
+// ScheduledMonitor wraps a db_gen.Monitor pointer with runtime scheduling state.
+// Runtime fields (ConsecutiveFailures, LastPollAt, NextPollDeadline) exist only
+// in memory and are never persisted to the database.
+type ScheduledMonitor struct {
+	Monitor             *db_gen.Monitor // Pointer to actual monitor data
+	ConsecutiveFailures int             // Runtime: failure count (reset on success)
+	LastPollAt          time.Time       // Runtime: when last polled
+	NextPollDeadline    time.Time       // Runtime: when next poll is due
+	heapIndex           int             // Heap index for heap.Fix (-1 if not in heap)
 }
 
 // NewMonitorCache creates a new monitor cache.
 func NewMonitorCache() *MonitorCache {
 	return &MonitorCache{
-		monitors: make(map[uuid.UUID]*db_gen.Monitor),
+		monitors: make(map[uuid.UUID]*ScheduledMonitor),
 	}
 }
 
@@ -33,7 +54,19 @@ func NewMonitorCache() *MonitorCache {
 func (mc *MonitorCache) Add(monitor *db_gen.Monitor) {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
-	mc.monitors[monitor.ID] = monitor
+
+	// Create ScheduledMonitor wrapper
+	sm := &ScheduledMonitor{
+		Monitor:          monitor,
+		NextPollDeadline: time.Now(),
+		heapIndex:        -1,
+	}
+	mc.monitors[monitor.ID] = sm
+
+	// Add to scheduler if available
+	if mc.scheduler != nil {
+		mc.scheduler.AddMonitor(sm)
+	}
 }
 
 // Remove removes a monitor from the cache.
@@ -47,8 +80,11 @@ func (mc *MonitorCache) Remove(monitorID uuid.UUID) {
 func (mc *MonitorCache) Get(monitorID uuid.UUID) (*db_gen.Monitor, bool) {
 	mc.mu.RLock()
 	defer mc.mu.RUnlock()
-	monitor, exists := mc.monitors[monitorID]
-	return monitor, exists
+	sm, exists := mc.monitors[monitorID]
+	if !exists {
+		return nil, false
+	}
+	return sm.Monitor, true
 }
 
 // GetAll returns a copy of all monitors currently in the cache.
@@ -56,8 +92,8 @@ func (mc *MonitorCache) GetAll() []*db_gen.Monitor {
 	mc.mu.RLock()
 	defer mc.mu.RUnlock()
 	monitors := make([]*db_gen.Monitor, 0, len(mc.monitors))
-	for _, monitor := range mc.monitors {
-		monitors = append(monitors, monitor)
+	for _, sm := range mc.monitors {
+		monitors = append(monitors, sm.Monitor)
 	}
 	return monitors
 }
@@ -69,6 +105,57 @@ func (mc *MonitorCache) Size() int {
 	return len(mc.monitors)
 }
 
+// SetScheduler sets the back-reference to scheduler (called once on startup).
+// It also adds all cached monitors to the scheduler's heap.
+func (mc *MonitorCache) SetScheduler(s SchedulerInterface) {
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+	mc.scheduler = s
+
+	// Add all cached monitors to the scheduler's heap
+	if mc.scheduler != nil {
+		for _, sm := range mc.monitors {
+			mc.scheduler.AddMonitor(sm)
+		}
+	}
+}
+
+// GetScheduled retrieves a scheduled monitor from the cache.
+func (mc *MonitorCache) GetScheduled(monitorID uuid.UUID) (*ScheduledMonitor, bool) {
+	mc.mu.RLock()
+	defer mc.mu.RUnlock()
+	sm, exists := mc.monitors[monitorID]
+	return sm, exists
+}
+
+// IncrementFailures increments and returns new failure count.
+func (mc *MonitorCache) IncrementFailures(monitorID uuid.UUID) int {
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+	if sm, exists := mc.monitors[monitorID]; exists {
+		sm.ConsecutiveFailures++
+		return sm.ConsecutiveFailures
+	}
+	return 0
+}
+
+// ResetFailures resets failure count to 0.
+func (mc *MonitorCache) ResetFailures(monitorID uuid.UUID) {
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+	if sm, exists := mc.monitors[monitorID]; exists {
+		sm.ConsecutiveFailures = 0
+	}
+}
+
+// Exists checks if monitor is in cache (for lazy deletion).
+func (mc *MonitorCache) Exists(monitorID uuid.UUID) bool {
+	mc.mu.RLock()
+	defer mc.mu.RUnlock()
+	_, exists := mc.monitors[monitorID]
+	return exists
+}
+
 // StateHandler manages monitor state transitions and coordinates with the database
 // and event channels. It handles state changes (monitor down/recovered) and updates the
 // monitor cache accordingly.
@@ -77,7 +164,7 @@ type StateHandler struct {
 	events *channels.EventChannels
 
 	// db is the database connection for persisting state changes
-	db *sql.DB
+	db *pgxpool.Pool
 
 	// querier provides database operations
 	querier db_gen.Querier
@@ -115,7 +202,7 @@ type StateHandler struct {
 //
 //	handler := NewStateHandler(events, db, logger)
 //	go handler.Run(ctx)
-func NewStateHandler(events *channels.EventChannels, db *sql.DB, logger *slog.Logger) *StateHandler {
+func NewStateHandler(events *channels.EventChannels, db *pgxpool.Pool, logger *slog.Logger) *StateHandler {
 	return &StateHandler{
 		events:  events,
 		db:      db,
@@ -297,7 +384,7 @@ func (sh *StateHandler) handleMonitorRecovered(ctx context.Context, event channe
 	// Fetch the updated monitor configuration
 	monitor, err := sh.querier.GetMonitor(ctx, event.MonitorID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, pgx.ErrNoRows) {
 			sh.logger.Warn("Monitor not found after recovery (may have been deleted)",
 				"monitor_id", event.MonitorID.String(),
 				"ip_address", event.IP,
@@ -340,17 +427,12 @@ func (sh *StateHandler) updateMonitorStatus(ctx context.Context, monitorID uuid.
 		WHERE id = $2 AND deleted_at IS NULL
 	`
 
-	result, err := sh.db.ExecContext(ctx, query, status, monitorID)
+	result, err := sh.db.Exec(ctx, query, status, monitorID)
 	if err != nil {
 		return fmt.Errorf("database exec failed: %w", err)
 	}
 
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("failed to get rows affected: %w", err)
-	}
-
-	if rowsAffected == 0 {
+	if result.RowsAffected() == 0 {
 		return fmt.Errorf("no rows updated: monitor may not exist or may be deleted")
 	}
 
@@ -389,7 +471,8 @@ func (sh *StateHandler) LoadActiveMonitors(ctx context.Context) error {
 		return fmt.Errorf("failed to list monitors: %w", err)
 	}
 
-	// Filter for active monitors and add to cache
+	// Filter for active monitors only
+	// Down and maintenance monitors are excluded until explicitly re-enabled
 	activeCount := 0
 	for _, monitor := range monitors {
 		// Only cache monitors with 'active' status

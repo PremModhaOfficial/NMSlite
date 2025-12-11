@@ -16,7 +16,6 @@ func StartDiscoveryCompletionLogger(ctx context.Context, events *EventChannels, 
 					return
 				}
 				logger.InfoContext(ctx, "Discovery completed",
-					slog.String("job_id", event.JobID.String()),
 					slog.String("profile_id", event.ProfileID.String()),
 					slog.String("status", event.Status),
 					slog.Int("devices_found", event.DevicesFound),

@@ -49,8 +49,7 @@ Follow this sequence for a complete test:
    ├── GET  /discoveries      → List existing
    ├── POST /discoveries      → Create discovery profile (ID auto-saved)
    ├── GET  /discoveries/{id} → Verify creation
-   ├── POST /discoveries/{id}/run → Start scan (job_id auto-saved)
-   ├── GET  /discoveries/{id}/jobs/{job_id} → Check progress
+   ├── POST /discoveries/{id}/run → Start scan
    └── GET  /discoveries/{id}/results → Get final results
 
 4. Monitors (created by discovery)
@@ -62,8 +61,7 @@ Follow this sequence for a complete test:
    └── PATCH /monitors/{id}/restore → Restore deleted
 
 5. Protocols (reference)
-   ├── GET  /protocols        → List all supported protocols
-   └── GET  /protocols/{id}/schema → Get credential schema
+   └── GET  /protocols        → List all supported protocols
 ```
 
 ## Environment Variables
@@ -77,7 +75,6 @@ Follow this sequence for a complete test:
 | `credential_id` | Last created credential profile ID | Yes (after create) |
 | `discovery_id` | Last created discovery profile ID | Yes (after create) |
 | `monitor_id` | Monitor/device ID | Yes (from list) |
-| `job_id` | Discovery job ID | Yes (after run) |
 
 ### Customizing Variables
 

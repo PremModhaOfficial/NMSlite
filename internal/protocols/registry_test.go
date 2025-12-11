@@ -1,6 +1,7 @@
 package protocols
 
 import (
+	"encoding/json"
 	"testing"
 )
 
@@ -75,7 +76,7 @@ func TestGetProtocol(t *testing.T) {
 	}
 }
 
-func TestGetSchema(t *testing.T) {
+func TestGetCredentialType(t *testing.T) {
 	registry := GetRegistry()
 
 	testCases := []struct {
@@ -83,56 +84,66 @@ func TestGetSchema(t *testing.T) {
 		protocolID  string
 		shouldExist bool
 	}{
-		{"WinRM Schema", "winrm", true},
-		{"SSH Schema", "ssh", true},
-		{"SNMP Schema", "snmp-v2c", true},
-		{"Invalid Schema", "invalid", false},
+		{"WinRM Credential Type", "winrm", true},
+		{"SSH Credential Type", "ssh", true},
+		{"SNMP Credential Type", "snmp-v2c", true},
+		{"Invalid Credential Type", "invalid", false},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			schema, err := registry.GetSchema(tc.protocolID)
+			credType, err := registry.GetCredentialType(tc.protocolID)
 
 			if tc.shouldExist {
 				if err != nil {
-					t.Errorf("Expected schema for %s to exist, got error: %v", tc.protocolID, err)
+					t.Errorf("Expected credential type for %s to exist, got error: %v", tc.protocolID, err)
 				}
-				if len(schema) == 0 {
-					t.Error("Schema should not be empty")
+				if credType == nil {
+					t.Error("Credential type should not be nil")
 				}
 			} else {
 				if err == nil {
-					t.Errorf("Expected error for schema %s, but got none", tc.protocolID)
+					t.Errorf("Expected error for credential type %s, but got none", tc.protocolID)
 				}
 			}
 		})
 	}
 }
 
+// Helper function to create JSON from map
+func toJSON(t *testing.T, data map[string]any) json.RawMessage {
+	t.Helper()
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		t.Fatalf("Failed to marshal test data: %v", err)
+	}
+	return jsonData
+}
+
 func TestValidateWinRMCredentials(t *testing.T) {
 	testCases := []struct {
 		name      string
-		creds     map[string]interface{}
+		creds     map[string]any
 		shouldErr bool
 	}{
 		{
 			"Valid WinRM",
-			map[string]interface{}{"username": "admin", "password": "pass123"},
+			map[string]any{"username": "admin", "password": "pass123"},
 			false,
 		},
 		{
 			"Missing username",
-			map[string]interface{}{"password": "pass123"},
+			map[string]any{"password": "pass123"},
 			true,
 		},
 		{
 			"Missing password",
-			map[string]interface{}{"username": "admin"},
+			map[string]any{"username": "admin"},
 			true,
 		},
 		{
 			"Empty username",
-			map[string]interface{}{"username": "", "password": "pass123"},
+			map[string]any{"username": "", "password": "pass123"},
 			true,
 		},
 	}
@@ -141,7 +152,7 @@ func TestValidateWinRMCredentials(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := registry.ValidateCredentials("winrm", tc.creds)
+			_, err := registry.ValidateCredentials("winrm", toJSON(t, tc.creds))
 
 			if tc.shouldErr && err == nil {
 				t.Error("Expected validation error, but got none")
@@ -156,27 +167,27 @@ func TestValidateWinRMCredentials(t *testing.T) {
 func TestValidateSSHCredentials(t *testing.T) {
 	testCases := []struct {
 		name      string
-		creds     map[string]interface{}
+		creds     map[string]any
 		shouldErr bool
 	}{
 		{
 			"Valid SSH with password",
-			map[string]interface{}{"username": "ubuntu", "password": "pass123"},
+			map[string]any{"username": "ubuntu", "password": "pass123"},
 			false,
 		},
 		{
 			"Valid SSH with key",
-			map[string]interface{}{"username": "ubuntu", "private_key": "-----BEGIN RSA PRIVATE KEY-----"},
+			map[string]any{"username": "ubuntu", "private_key": "-----BEGIN RSA PRIVATE KEY-----"},
 			false,
 		},
 		{
 			"Missing username",
-			map[string]interface{}{"password": "pass123"},
+			map[string]any{"password": "pass123"},
 			true,
 		},
 		{
 			"Missing both password and key",
-			map[string]interface{}{"username": "ubuntu"},
+			map[string]any{"username": "ubuntu"},
 			true,
 		},
 	}
@@ -185,7 +196,7 @@ func TestValidateSSHCredentials(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := registry.ValidateCredentials("ssh", tc.creds)
+			_, err := registry.ValidateCredentials("ssh", toJSON(t, tc.creds))
 
 			if tc.shouldErr && err == nil {
 				t.Error("Expected validation error, but got none")
@@ -200,22 +211,22 @@ func TestValidateSSHCredentials(t *testing.T) {
 func TestValidateSNMPCredentials(t *testing.T) {
 	testCases := []struct {
 		name      string
-		creds     map[string]interface{}
+		creds     map[string]any
 		shouldErr bool
 	}{
 		{
 			"Valid SNMP",
-			map[string]interface{}{"community": "public"},
+			map[string]any{"community": "public"},
 			false,
 		},
 		{
 			"Missing community",
-			map[string]interface{}{},
+			map[string]any{},
 			true,
 		},
 		{
 			"Empty community",
-			map[string]interface{}{"community": ""},
+			map[string]any{"community": ""},
 			true,
 		},
 	}
@@ -224,7 +235,7 @@ func TestValidateSNMPCredentials(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := registry.ValidateCredentials("snmp-v2c", tc.creds)
+			_, err := registry.ValidateCredentials("snmp-v2c", toJSON(t, tc.creds))
 
 			if tc.shouldErr && err == nil {
 				t.Error("Expected validation error, but got none")
@@ -233,5 +244,41 @@ func TestValidateSNMPCredentials(t *testing.T) {
 				t.Errorf("Expected no error, but got: %v", err)
 			}
 		})
+	}
+}
+
+func TestValidationErrorFormat(t *testing.T) {
+	registry := GetRegistry()
+
+	// Test with invalid WinRM credentials (missing required fields)
+	_, err := registry.ValidateCredentials("winrm", toJSON(t, map[string]any{}))
+	if err == nil {
+		t.Fatal("Expected validation error, but got none")
+	}
+
+	// Check if error is a ValidationErrors type
+	validationErrs, ok := err.(*ValidationErrors)
+	if !ok {
+		t.Fatalf("Expected *ValidationErrors, got %T", err)
+	}
+
+	// Should have errors for username and password
+	if len(validationErrs.Errors) != 2 {
+		t.Errorf("Expected 2 validation errors, got %d", len(validationErrs.Errors))
+	}
+
+	// Check error message format
+	errMsg := validationErrs.Error()
+	if errMsg == "" {
+		t.Error("Error message should not be empty")
+	}
+}
+
+func TestInvalidProtocolValidation(t *testing.T) {
+	registry := GetRegistry()
+
+	_, err := registry.ValidateCredentials("invalid-protocol", toJSON(t, map[string]any{}))
+	if err == nil {
+		t.Error("Expected error for invalid protocol, but got none")
 	}
 }

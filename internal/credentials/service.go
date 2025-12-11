@@ -33,8 +33,14 @@ func (s *Service) GetDecrypted(ctx context.Context, profileID uuid.UUID) (*plugi
 		return nil, fmt.Errorf("failed to fetch credential profile: %w", err)
 	}
 
-	// Decrypt credential_data (convert json.RawMessage to string)
-	decryptedData, err := s.authService.Decrypt(string(profile.CredentialData))
+	// Decrypt credential_data (expecting a JSON string containing the encrypted payload)
+	var encryptedStr string
+	if err := json.Unmarshal(profile.CredentialData, &encryptedStr); err != nil {
+		// Fallback: try using the raw data as string (legacy/unencrypted support)
+		encryptedStr = string(profile.CredentialData)
+	}
+
+	decryptedData, err := s.authService.Decrypt(encryptedStr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt credentials: %w", err)
 	}

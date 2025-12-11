@@ -11,8 +11,8 @@ A secure storage entity that holds authentication secrets.
 *   **Relationship:** A **Plugin** (e.g., "Windows Server 2019") *requires* a specific **Protocol** (e.g., "WinRM").
 *   **Schema Source:** The *Protocol* defines the structure of the secrets (e.g., WinRM needs `username/password`, AWS needs `access_key/secret`).
 
-**How to get the Schema:**
-2.  Query the Protocol: `GET /protocols/winrm/schema` -> returns the form fields.
+**Validation:**
+Credential details are validated using typed Go structs with `go-playground/validator` tags. The validation is performed at the API layer when creating or updating credential profiles.
 
 **Schema (JSON):**
 ```json
@@ -248,68 +248,75 @@ A self-contained, statically compiled Go binary responsible for fetching data fr
 The `credential_details` field is dynamic. We need to validate it *before* saving it to the database to ensure "WinRM" profiles actually have a username and password, while "SNMP" profiles have a community string.
 
 **1. Storage (The "Registry"):**
-*   **Location:** Application Code (e.g., `internal/protocols/registry.go`).
-*   **Mechanism:** A Map linking `protocol_id` → `JSON Schema Definition`.
-*   *Why?* Protocols are static standards. They don't need to be edited by users in the DB.
+*   **Location:** Application Code (`internal/protocols/registry.go` and `internal/protocols/credentials.go`).
+*   **Mechanism:** A Map linking `protocol_id` → `Go struct type` with validation tags.
+*   *Why?* Protocols are static standards. They don't need to be edited by users in the DB. Go structs provide compile-time type safety and clear validation rules.
 
-**2. Protocol Schemas:**
+**2. Protocol Credential Structs:**
 
-**WinRM Schema:**
-```json
-{
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "type": "object",
-  "required": ["username", "password"],
-  "properties": {
-    "username": { "type": "string", "minLength": 1 },
-    "password": { "type": "string", "minLength": 1 },
-    "domain": { "type": "string" },
-    "use_https": { "type": "boolean", "default": false }
-  }
+Credentials are validated using typed Go structs with `go-playground/validator` tags.
+
+**WinRM Credentials (`internal/protocols/credentials.go`):**
+```go
+type WinRMCredentials struct {
+    Username string `json:"username" validate:"required,min=1"`
+    Password string `json:"password" validate:"required,min=1"`
+    Domain   string `json:"domain,omitempty"`
+    UseHTTPS bool   `json:"use_https"`
 }
 ```
 
-**SSH Schema:**
-```json
-{
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "type": "object",
-  "required": ["username"],
-  "oneOf": [
-    { "required": ["password"] },
-    { "required": ["private_key"] }
-  ],
-  "properties": {
-    "username": { "type": "string", "minLength": 1 },
-    "password": { "type": "string" },
-    "private_key": { "type": "string" },
-    "passphrase": { "type": "string" }
-  }
+**SSH Credentials:**
+```go
+type SSHCredentials struct {
+    Username   string `json:"username" validate:"required,min=1"`
+    Password   string `json:"password,omitempty"`
+    PrivateKey string `json:"private_key,omitempty"`
+    Passphrase string `json:"passphrase,omitempty"`
+    Port       int    `json:"port,omitempty"`
+}
+
+// Custom validation: Either password or private_key must be provided
+func (s *SSHCredentials) Validate() error {
+    if s.Password == "" && s.PrivateKey == "" {
+        return fmt.Errorf("either password or private_key is required for SSH")
+    }
+    return nil
 }
 ```
 
-**SNMP v2c Schema:**
-```json
-{
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "type": "object",
-  "required": ["community"],
-  "properties": {
-    "community": { "type": "string", "minLength": 1, "default": "public" }
-  }
+**SNMP v2c Credentials:**
+```go
+type SNMPCredentials struct {
+    Community string `json:"community" validate:"required,min=1"`
 }
 ```
 
 **3. Validation Flow:**
 1.  **Receive:** POST request with `protocol: "winrm"` and a JSON payload.
-2.  **Lookup:** Fetch the predefined JSON Schema for `"winrm"` from the Registry.
-3.  **Validate:** Compare the incoming JSON payload against the Schema.
-    *   *If Invalid:* Return `400 Bad Request` with validation details.
+2.  **Lookup:** Get the registered struct type for `"winrm"` from the Registry.
+3.  **Unmarshal:** Decode the JSON into the typed struct.
+4.  **Validate:** Run `go-playground/validator` on the struct + any custom `Validate()` method.
+    *   *If Invalid:* Return `400 Bad Request` with detailed field-level validation errors.
     *   *If Valid:* Encrypt and save to the `credential_profiles` table.
 
-**4. Encryption Order:**
+**4. Validation Error Response:**
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Credential validation failed",
+    "details": [
+      {"field": "username", "message": "username is required"},
+      {"field": "password", "message": "password is required"}
+    ]
+  }
+}
 ```
-[API Input] → [Schema Validation] → [Encrypt] → [Store in DB]
+
+**5. Encryption Order:**
+```
+[API Input] → [Struct Validation] → [Encrypt] → [Store in DB]
 [DB Read] → [Decrypt] → [Return to Plugin via STDIN]
 ```
 
@@ -1039,55 +1046,22 @@ readinessProbe:
 | `/discoveries/{id}` | GET | JWT | Get discovery profile by ID |
 | `/discoveries/{id}` | PUT | JWT | Update discovery profile |
 | `/discoveries/{id}` | DELETE | JWT | Soft delete discovery profile |
-| `/discoveries/{id}/run` | POST | JWT | Trigger discovery (async, returns job_id) |
-| `/discoveries/{id}/jobs/{job_id}` | GET | JWT | Get discovery job status |
+| `/discoveries/{id}/run` | POST | JWT | Trigger discovery (async) |
 
-**Discovery Job (Async Execution):**
+**Discovery Run (Async Execution):**
 
 *Request:* `POST /api/v1/discoveries/{id}/run`
 
 *Response (202 Accepted):*
 ```json
 {
-  "job_id": "job_uuid_123",
-  "status": "running",
-  "started_at": "2023-12-07T12:00:00Z",
-  "discovery_profile_id": "uuid-discovery-1"
+  "status": "started",
+  "message": "Discovery started for profile {id}",
+  "profile_id": "uuid-discovery-1"
 }
 ```
 
-*Poll Status:* `GET /api/v1/discoveries/{id}/jobs/{job_id}`
-
-*Response (200 OK - In Progress):*
-```json
-{
-  "job_id": "job_uuid_123",
-  "status": "running",
-  "started_at": "2023-12-07T12:00:00Z",
-  "progress": {
-    "total_ips": 256,
-    "scanned": 128,
-    "discovered": 15
-  }
-}
-```
-
-*Response (200 OK - Completed):*
-```json
-{
-  "job_id": "job_uuid_123",
-  "status": "completed",
-  "started_at": "2023-12-07T12:00:00Z",
-  "completed_at": "2023-12-07T12:05:00Z",
-  "result": {
-    "total_ips": 256,
-    "scanned": 256,
-    "discovered": 47,
-    "failed": 0
-  },
-  "devices_created": ["uuid-1", "uuid-2", "..."]
-}
-```
+*Note:* Discovery runs asynchronously. Results are emitted via the event system and devices are automatically provisioned as monitors when discovered.
 
 **Monitors (Devices):**
 | Endpoint | Method | Auth | Description |
@@ -1103,7 +1077,6 @@ readinessProbe:
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
 | `/protocols` | GET | JWT | List supported protocols |
-| `/protocols/{id}/schema` | GET | JWT | Get JSON schema for protocol |
 
 **Health:**
 | Endpoint | Method | Auth | Description |

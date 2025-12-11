@@ -1,7 +1,6 @@
 package api
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,21 +8,29 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nmslite/nmslite/internal/auth"
 	"github.com/nmslite/nmslite/internal/database/db_gen"
+	"github.com/nmslite/nmslite/internal/protocols"
 )
 
 // CredentialHandler handles credential profile endpoints
 type CredentialHandler struct {
+	pool        *pgxpool.Pool
 	q           db_gen.Querier
 	authService *auth.Service
+	registry    *protocols.Registry
 }
 
 // NewCredentialHandler creates a new credential handler
-func NewCredentialHandler(q db_gen.Querier, authService *auth.Service) *CredentialHandler {
+func NewCredentialHandler(pool *pgxpool.Pool, authService *auth.Service) *CredentialHandler {
 	return &CredentialHandler{
-		q:           q,
+		pool:        pool,
+		q:           db_gen.New(pool),
 		authService: authService,
+		registry:    protocols.GetRegistry(),
 	}
 }
 
@@ -48,7 +55,7 @@ func (h *CredentialHandler) List(w http.ResponseWriter, r *http.Request) {
 		// If unmarshal fails or decrypt fails, we leave it as is (might be legacy unencrypted data)
 	}
 
-	sendJSON(w, http.StatusOK, map[string]interface{}{
+	sendJSON(w, http.StatusOK, map[string]any{
 		"data":  profiles,
 		"total": len(profiles),
 	})
@@ -68,9 +75,28 @@ func (h *CredentialHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate input (basic)
+	// Validate basic required fields
 	if input.Name == "" || input.Protocol == "" {
 		sendError(w, r, http.StatusBadRequest, "VALIDATION_ERROR", "Name and Protocol are required", nil)
+		return
+	}
+
+	// Validate credentials against protocol schema using struct-based validation
+	_, err := h.registry.ValidateCredentials(input.Protocol, input.CredentialData)
+	if err != nil {
+		// Check if it's a ValidationErrors type for detailed response
+		var validationErrs *protocols.ValidationErrors
+		if errors.As(err, &validationErrs) {
+			sendJSON(w, http.StatusBadRequest, map[string]any{
+				"error": map[string]any{
+					"code":    "VALIDATION_ERROR",
+					"message": "Credential validation failed",
+					"details": validationErrs.Errors,
+				},
+			})
+			return
+		}
+		sendError(w, r, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
 		return
 	}
 
@@ -86,7 +112,7 @@ func (h *CredentialHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	params := db_gen.CreateCredentialProfileParams{
 		Name:           input.Name,
-		Description:    sql.NullString{String: input.Description, Valid: input.Description != ""},
+		Description:    pgtype.Text{String: input.Description, Valid: input.Description != ""},
 		Protocol:       input.Protocol,
 		CredentialData: encryptedJSON,
 	}
@@ -111,7 +137,7 @@ func (h *CredentialHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	profile, err := h.q.GetCredentialProfile(r.Context(), id)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, pgx.ErrNoRows) {
 			sendError(w, r, http.StatusNotFound, "NOT_FOUND", "Credential profile not found", nil)
 			return
 		}
@@ -151,6 +177,27 @@ func (h *CredentialHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate credentials against protocol schema using struct-based validation
+	if input.Protocol != "" && len(input.CredentialData) > 0 {
+		_, err := h.registry.ValidateCredentials(input.Protocol, input.CredentialData)
+		if err != nil {
+			// Check if it's a ValidationErrors type for detailed response
+			var validationErrs *protocols.ValidationErrors
+			if errors.As(err, &validationErrs) {
+				sendJSON(w, http.StatusBadRequest, map[string]any{
+					"error": map[string]any{
+						"code":    "VALIDATION_ERROR",
+						"message": "Credential validation failed",
+						"details": validationErrs.Errors,
+					},
+				})
+				return
+			}
+			sendError(w, r, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+			return
+		}
+	}
+
 	// Encrypt credential data
 	encryptedStr, err := h.authService.Encrypt(input.CredentialData)
 	if err != nil {
@@ -164,14 +211,14 @@ func (h *CredentialHandler) Update(w http.ResponseWriter, r *http.Request) {
 	params := db_gen.UpdateCredentialProfileParams{
 		ID:             id,
 		Name:           input.Name,
-		Description:    sql.NullString{String: input.Description, Valid: input.Description != ""},
+		Description:    pgtype.Text{String: input.Description, Valid: input.Description != ""},
 		Protocol:       input.Protocol,
 		CredentialData: encryptedJSON,
 	}
 
 	profile, err := h.q.UpdateCredentialProfile(r.Context(), params)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, pgx.ErrNoRows) {
 			sendError(w, r, http.StatusNotFound, "NOT_FOUND", "Credential profile not found", nil)
 			return
 		}

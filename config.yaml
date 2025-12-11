@@ -31,9 +31,18 @@ database:
   password: "nmslite"
   dbname: "nmslite"
   ssl_mode: "disable"
-  max_open_conns: 25
-  max_idle_conns: 5
-  conn_max_lifetime_minutes: 30
+  api_pool:
+    max_conns: 5
+    min_conns: 1
+    max_conn_lifetime_minutes: 30
+    max_conn_idle_time_minutes: 5
+    health_check_period_seconds: 30
+  metrics_pool:
+    max_conns: 3
+    min_conns: 1
+    max_conn_lifetime_minutes: 30
+    max_conn_idle_time_minutes: 5
+    health_check_period_seconds: 30
 
 # Authentication & Security
 auth:
@@ -50,15 +59,26 @@ poller:
   liveness_timeout_ms: 2000
   liveness_batch_size: 50
   batch_flush_interval_ms: 100
-  plugin_timeout_ms: 10000
+  plugin_timeout_ms: 60000
   down_threshold: 3
+
+# Scheduler Configuration
+scheduler:
+  tick_interval_ms: 10000 # How often to check the priority queue (10s default)
+  liveness_workers: 100 # Max concurrent TCP SYN probes (semaphore limit)
+  plugin_workers: 50 # Max concurrent plugin executions (semaphore limit)
+  liveness_timeout_ms: 2000 # TCP SYN timeout
+  plugin_timeout_ms: 60000 # Plugin execution timeout
+  down_threshold: 3 # Consecutive failures before marking down
 
 # Metrics Storage
 metrics:
   batch_size: 100
-  flush_interval_ms: 1000
+  flush_interval_ms: 10
   retention_days: 90
   compression_after_hours: 1
+  max_buffer_size: 10000
+  max_metric_age_minutes: 5
 
 # Discovery Configuration
 discovery:
@@ -67,11 +87,11 @@ discovery:
 
 # Plugin Configuration
 plugins:
-  directory: "./plugins"
+  directory: "./plugin_bins"
   scan_interval_seconds: 60
 
 # Event Bus Configuration
-eventbus:
+channel:
   poll_jobs_channel_size: 100
   metric_results_channel_size: 100
   cache_events_channel_size: 50
@@ -80,7 +100,7 @@ eventbus:
 
 # Logging
 logging:
-  level: "info"
+  level: "debug"
   format: "json"
   output: "stdout"
   file_path: "/var/log/nms/nms.log"

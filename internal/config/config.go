@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"slices"
 	"strings"
@@ -18,10 +19,11 @@ type Config struct {
 	Database  DatabaseConfig  `yaml:"database"`
 	Auth      AuthConfig      `yaml:"auth"`
 	Poller    PollerConfig    `yaml:"poller"`
+	Scheduler SchedulerConfig `yaml:"scheduler"`
 	Metrics   MetricsConfig   `yaml:"metrics"`
 	Discovery DiscoveryConfig `yaml:"discovery"`
 	Plugins   PluginsConfig   `yaml:"plugins"`
-	EventBus  EventBusConfig  `yaml:"eventbus"`
+	Channel   EventBusConfig  `yaml:"channel"`
 	Logging   LoggingConfig   `yaml:"logging"`
 }
 
@@ -46,16 +48,24 @@ type CORSConfig struct {
 	MaxAgeSeconds  int      `yaml:"max_age_seconds"`
 }
 
+// PoolConfig defines connection pool settings
+type PoolConfig struct {
+	MaxConns                 int `yaml:"max_conns"`
+	MinConns                 int `yaml:"min_conns"`
+	MaxConnLifetimeMinutes   int `yaml:"max_conn_lifetime_minutes"`
+	MaxConnIdleTimeMinutes   int `yaml:"max_conn_idle_time_minutes"`
+	HealthCheckPeriodSeconds int `yaml:"health_check_period_seconds"`
+}
+
 type DatabaseConfig struct {
-	Host                   string `yaml:"host"`
-	Port                   int    `yaml:"port"`
-	User                   string `yaml:"user"`
-	Password               string `yaml:"password"`
-	DBName                 string `yaml:"dbname"`
-	SSLMode                string `yaml:"ssl_mode"`
-	MaxOpenConns           int    `yaml:"max_open_conns"`
-	MaxIdleConns           int    `yaml:"max_idle_conns"`
-	ConnMaxLifetimeMinutes int    `yaml:"conn_max_lifetime_minutes"`
+	Host        string     `yaml:"host"`
+	Port        int        `yaml:"port"`
+	User        string     `yaml:"user"`
+	Password    string     `yaml:"password"`
+	DBName      string     `yaml:"dbname"`
+	SSLMode     string     `yaml:"ssl_mode"`
+	APIPool     PoolConfig `yaml:"api_pool"`
+	MetricsPool PoolConfig `yaml:"metrics_pool"`
 }
 
 type AuthConfig struct {
@@ -76,11 +86,22 @@ type PollerConfig struct {
 	DownThreshold        int `yaml:"down_threshold"`
 }
 
+type SchedulerConfig struct {
+	TickIntervalMS    int `yaml:"tick_interval_ms"`
+	LivenessWorkers   int `yaml:"liveness_workers"`
+	PluginWorkers     int `yaml:"plugin_workers"`
+	LivenessTimeoutMS int `yaml:"liveness_timeout_ms"`
+	PluginTimeoutMS   int `yaml:"plugin_timeout_ms"`
+	DownThreshold     int `yaml:"down_threshold"`
+}
+
 type MetricsConfig struct {
 	BatchSize             int `yaml:"batch_size"`
 	FlushIntervalMS       int `yaml:"flush_interval_ms"`
 	RetentionDays         int `yaml:"retention_days"`
 	CompressionAfterHours int `yaml:"compression_after_hours"`
+	MaxBufferSize         int `yaml:"max_buffer_size"`
+	MaxMetricAgeMinutes   int `yaml:"max_metric_age_minutes"`
 }
 
 type DiscoveryConfig struct {
@@ -189,19 +210,19 @@ func applyEnvOverrides(cfg *Config) {
 
 	// EventBus overrides
 	if v := os.Getenv("NMS_EVENTBUS_POLL_JOBS_CHANNEL_SIZE"); v != "" {
-		fmt.Sscanf(v, "%d", &cfg.EventBus.PollJobsChannelSize)
+		fmt.Sscanf(v, "%d", &cfg.Channel.PollJobsChannelSize)
 	}
 	if v := os.Getenv("NMS_EVENTBUS_METRIC_RESULTS_CHANNEL_SIZE"); v != "" {
-		fmt.Sscanf(v, "%d", &cfg.EventBus.MetricResultsChannelSize)
+		fmt.Sscanf(v, "%d", &cfg.Channel.MetricResultsChannelSize)
 	}
 	if v := os.Getenv("NMS_EVENTBUS_CACHE_EVENTS_CHANNEL_SIZE"); v != "" {
-		fmt.Sscanf(v, "%d", &cfg.EventBus.CacheEventsChannelSize)
+		fmt.Sscanf(v, "%d", &cfg.Channel.CacheEventsChannelSize)
 	}
 	if v := os.Getenv("NMS_EVENTBUS_STATE_SIGNAL_CHANNEL_SIZE"); v != "" {
-		fmt.Sscanf(v, "%d", &cfg.EventBus.StateSignalChannelSize)
+		fmt.Sscanf(v, "%d", &cfg.Channel.StateSignalChannelSize)
 	}
 	if v := os.Getenv("NMS_EVENTBUS_DISCOVERY_EVENTS_CHANNEL_SIZE"); v != "" {
-		fmt.Sscanf(v, "%d", &cfg.EventBus.DiscoveryEventsChannelSize)
+		fmt.Sscanf(v, "%d", &cfg.Channel.DiscoveryEventsChannelSize)
 	}
 }
 
@@ -215,12 +236,76 @@ func (s *ServerConfig) GetWriteTimeout() time.Duration {
 	return time.Duration(s.WriteTimeoutMS) * time.Millisecond
 }
 
-// GetDSN returns the PostgreSQL connection string
-func (d *DatabaseConfig) GetDSN() string {
-	return fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-		d.Host, d.Port, d.User, d.Password, d.DBName, d.SSLMode,
-	)
+// GetConnString returns the PostgreSQL connection string in postgres:// URL format
+func (d *DatabaseConfig) GetConnString() string {
+	u := &url.URL{
+		Scheme: "postgres",
+		User:   url.UserPassword(d.User, d.Password),
+		Host:   fmt.Sprintf("%s:%d", d.Host, d.Port),
+		Path:   d.DBName,
+	}
+
+	query := url.Values{}
+	if d.SSLMode != "" {
+		query.Set("sslmode", d.SSLMode)
+	}
+	u.RawQuery = query.Encode()
+
+	return u.String()
+}
+
+// ApplyDefaults sets default values for pool configuration
+func (p *PoolConfig) ApplyDefaults(isAPI bool) {
+	if isAPI {
+		// API pool defaults - lower connections, shorter lifetimes
+		if p.MaxConns == 0 {
+			p.MaxConns = 25
+		}
+		if p.MinConns == 0 {
+			p.MinConns = 5
+		}
+		if p.MaxConnLifetimeMinutes == 0 {
+			p.MaxConnLifetimeMinutes = 60
+		}
+		if p.MaxConnIdleTimeMinutes == 0 {
+			p.MaxConnIdleTimeMinutes = 10
+		}
+		if p.HealthCheckPeriodSeconds == 0 {
+			p.HealthCheckPeriodSeconds = 30
+		}
+	} else {
+		// Metrics pool defaults - higher connections, longer lifetimes
+		if p.MaxConns == 0 {
+			p.MaxConns = 50
+		}
+		if p.MinConns == 0 {
+			p.MinConns = 10
+		}
+		if p.MaxConnLifetimeMinutes == 0 {
+			p.MaxConnLifetimeMinutes = 120
+		}
+		if p.MaxConnIdleTimeMinutes == 0 {
+			p.MaxConnIdleTimeMinutes = 30
+		}
+		if p.HealthCheckPeriodSeconds == 0 {
+			p.HealthCheckPeriodSeconds = 60
+		}
+	}
+}
+
+// GetMaxConnLifetime returns the max connection lifetime as a duration
+func (p *PoolConfig) GetMaxConnLifetime() time.Duration {
+	return time.Duration(p.MaxConnLifetimeMinutes) * time.Minute
+}
+
+// GetMaxConnIdleTime returns the max connection idle time as a duration
+func (p *PoolConfig) GetMaxConnIdleTime() time.Duration {
+	return time.Duration(p.MaxConnIdleTimeMinutes) * time.Minute
+}
+
+// GetHealthCheckPeriod returns the health check period as a duration
+func (p *PoolConfig) GetHealthCheckPeriod() time.Duration {
+	return time.Duration(p.HealthCheckPeriodSeconds) * time.Second
 }
 
 // GetJWTExpiry returns JWT expiry as duration
@@ -232,4 +317,19 @@ func (a *AuthConfig) GetJWTExpiry() time.Duration {
 func (l *LoggingConfig) IsLogLevelValid() bool {
 	validLevels := []string{"debug", "info", "warn", "error"}
 	return slices.Contains(validLevels, strings.ToLower(l.Level))
+}
+
+// GetTickInterval returns the tick interval as a duration
+func (s *SchedulerConfig) GetTickInterval() time.Duration {
+	return time.Duration(s.TickIntervalMS) * time.Millisecond
+}
+
+// GetLivenessTimeout returns the liveness timeout as a duration
+func (s *SchedulerConfig) GetLivenessTimeout() time.Duration {
+	return time.Duration(s.LivenessTimeoutMS) * time.Millisecond
+}
+
+// GetPluginTimeout returns the plugin timeout as a duration
+func (s *SchedulerConfig) GetPluginTimeout() time.Duration {
+	return time.Duration(s.PluginTimeoutMS) * time.Millisecond
 }

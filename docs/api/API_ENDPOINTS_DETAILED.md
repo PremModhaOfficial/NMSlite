@@ -71,49 +71,6 @@ Returns all available protocols with their metadata.
 }
 ```
 
-### Get Protocol Schema
-**GET** `/api/v1/protocols/{protocol_id}/schema`
-
-Returns the JSON schema for a specific protocol's credential structure.
-
-**Example:** `GET /api/v1/protocols/winrm/schema`
-
-**Response (200 OK):**
-```json
-{
-  "protocol": "winrm",
-  "schema": {
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "type": "object",
-    "required": ["username", "password"],
-    "properties": {
-      "username": {
-        "type": "string",
-        "minLength": 1,
-        "description": "Windows username"
-      },
-      "password": {
-        "type": "string",
-        "minLength": 1,
-        "description": "Windows password"
-      },
-      "domain": {
-        "type": "string",
-        "description": "Windows domain (optional)"
-      },
-      "use_https": {
-        "type": "boolean",
-        "default": false,
-        "description": "Use HTTPS instead of HTTP"
-      }
-    }
-  }
-}
-```
-
-**Errors:**
-- `404 NOT_FOUND` - Protocol not found
-
 ---
 
 ## Credential Profiles
@@ -386,7 +343,7 @@ Returns the JSON schema for a specific protocol's credential structure.
 **Errors:**
 - `404 NOT_FOUND` - Discovery profile not found
 
-### Run Discovery Job
+### Run Discovery
 **POST** `/api/v1/discoveries/{id}/run`
 
 Triggers an asynchronous discovery scan.
@@ -394,57 +351,14 @@ Triggers an asynchronous discovery scan.
 **Response (202 Accepted):**
 ```json
 {
-  "job_id": "770e8400-e29b-41d4-a716-446655440002",
-  "status": "running",
-  "started_at": "2023-12-07T12:00:00Z",
-  "discovery_profile_id": "660e8400-e29b-41d4-a716-446655440001"
+  "status": "accepted",
+  "message": "Discovery started",
+  "profile_id": "660e8400-e29b-41d4-a716-446655440001"
 }
 ```
 
-### Get Discovery Job Status
-**GET** `/api/v1/discoveries/{id}/jobs/{job_id}`
-
-**Response (200 OK - Running):**
-```json
-{
-  "job_id": "770e8400-e29b-41d4-a716-446655440002",
-  "status": "running",
-  "started_at": "2023-12-07T12:00:00Z",
-  "progress": {
-    "total_ips": 256,
-    "scanned": 128,
-    "discovered": 15,
-    "percentage": 50
-  }
-}
-```
-
-**Response (200 OK - Completed):**
-```json
-{
-  "job_id": "770e8400-e29b-41d4-a716-446655440002",
-  "status": "completed",
-  "started_at": "2023-12-07T12:00:00Z",
-  "completed_at": "2023-12-07T12:05:00Z",
-  "result": {
-    "total_ips": 256,
-    "scanned": 256,
-    "discovered": 47,
-    "failed": 0
-  },
-  "devices_created": [
-    "880e8400-e29b-41d4-a716-446655440003",
-    "880e8400-e29b-41d4-a716-446655440004"
-  ]
-}
-```
-
-**Status Values:**
-- `pending` - Job queued but not started
-- `running` - Currently executing
-- `completed` - Finished successfully
-- `failed` - Job failed with error
-- `cancelled` - Job was cancelled by user
+**Errors:**
+- `404 NOT_FOUND` - Discovery profile not found
 
 ---
 
@@ -614,67 +528,90 @@ Manually create a monitor without discovery.
 }
 ```
 
-### Get Monitor Metrics
-**GET** `/api/v1/monitors/{id}/metrics`
+---
 
-**Query Parameters:**
-- `metric_group` (required) - Metric group: `host.cpu`, `host.memory`, `host.storage`, `net.interface`
-- `start_time` (optional) - ISO 8601 timestamp (default: 1 hour ago)
-- `end_time` (optional) - ISO 8601 timestamp (default: now)
-- `tags` (optional) - JSON object for tag filtering (e.g., `{"core":"0"}`)
-- `aggregation` (optional) - Aggregation function: `avg`, `min`, `max`, `sum` (default: raw data)
-- `interval` (optional) - Aggregation interval: `1m`, `5m`, `1h` (default: raw data)
+## Metrics
 
-**Example:** `GET /api/v1/monitors/{id}/metrics?metric_group=host.cpu&start_time=2023-12-07T11:00:00Z&end_time=2023-12-07T12:00:00Z&tags={"core":"0"}`
+### Query Metrics (Batch)
+**POST** `/api/v1/metrics/query`
+
+Query metrics for one or more monitors in a single request. Results are grouped by device ID.
+
+**Request:**
+```json
+{
+  "device_ids": [
+    "880e8400-e29b-41d4-a716-446655440003",
+    "880e8400-e29b-41d4-a716-446655440004"
+  ],
+  "start": "2023-12-07T11:00:00Z",
+  "end": "2023-12-07T12:00:00Z",
+  "metric_groups": ["host.cpu", "host.memory"],
+  "tag_filters": [
+    {"key": "core", "op": "eq", "values": ["0"]}
+  ],
+  "limit": 100,
+  "latest": false
+}
+```
+
+**Request Fields:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `device_ids` | `uuid[]` | Yes | Array of monitor UUIDs to query |
+| `start` | `datetime` | Yes | Start of time range (ISO 8601) |
+| `end` | `datetime` | Yes | End of time range (ISO 8601) |
+| `metric_groups` | `string[]` | No | Filter by metric groups (e.g., `host.cpu`, `host.memory`) |
+| `tag_filters` | `object[]` | No | Tag filters (see operators below) |
+| `limit` | `int` | No | Max results per device (default: 100, max: 1000) |
+| `latest` | `bool` | No | If true, return only latest value per device/metric_group |
+
+**Tag Filter Operators:**
+- `eq` - Equals (single value)
+- `in` - In array (multiple values)  
+- `like` - SQL LIKE pattern
+- `exists` - Tag key exists
+- `gt`, `lt`, `gte`, `lte` - Numeric comparisons
 
 **Response (200 OK):**
 ```json
 {
-  "monitor_id": "880e8400-e29b-41d4-a716-446655440003",
-  "metric_group": "host.cpu",
-  "tags": {"core": "0"},
-  "start_time": "2023-12-07T11:00:00Z",
-  "end_time": "2023-12-07T12:00:00Z",
-  "data_points": [
-    {
-      "timestamp": "2023-12-07T11:00:00Z",
-      "val_used": 15.5,
-      "val_total": 100.0
-    },
-    {
-      "timestamp": "2023-12-07T11:01:00Z",
-      "val_used": 18.2,
-      "val_total": 100.0
-    }
-  ],
-  "count": 2
+  "data": {
+    "880e8400-e29b-41d4-a716-446655440003": [
+      {
+        "timestamp": "2023-12-07T11:30:00Z",
+        "metric_group": "host.cpu",
+        "device_id": "880e8400-e29b-41d4-a716-446655440003",
+        "tags": {"core": "0"},
+        "val_used": 15.5,
+        "val_total": 100.0
+      }
+    ],
+    "880e8400-e29b-41d4-a716-446655440004": []
+  },
+  "count": 1,
+  "query": {
+    "device_ids": ["880e8400-e29b-41d4-a716-446655440003", "880e8400-e29b-41d4-a716-446655440004"],
+    "start": "2023-12-07T11:00:00Z",
+    "end": "2023-12-07T12:00:00Z",
+    "metric_groups": ["host.cpu", "host.memory"],
+    "limit": 100,
+    "latest": false
+  }
 }
 ```
 
-**Response (200 OK - Aggregated):**
-```json
-{
-  "monitor_id": "880e8400-e29b-41d4-a716-446655440003",
-  "metric_group": "host.memory",
-  "start_time": "2023-12-07T11:00:00Z",
-  "end_time": "2023-12-07T12:00:00Z",
-  "aggregation": "avg",
-  "interval": "5m",
-  "data_points": [
-    {
-      "timestamp": "2023-12-07T11:00:00Z",
-      "val_used": 8589934592,
-      "val_total": 17179869184
-    },
-    {
-      "timestamp": "2023-12-07T11:05:00Z",
-      "val_used": 8658869043,
-      "val_total": 17179869184
-    }
-  ],
-  "count": 12
-}
-```
+**Notes:**
+- Invalid/non-existent device IDs are silently ignored (won't appear in response)
+- Devices with no metrics in the time range return empty array `[]`
+- For single device queries, pass one UUID in the array
+- `count` is total metrics across all devices
+
+**Errors:**
+- `400 INVALID_REQUEST` - `device_ids` array is empty
+- `400 INVALID_BODY` - Invalid JSON body
+- `500 QUERY_ERROR` - Database query failed
 
 ---
 

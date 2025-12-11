@@ -9,8 +9,6 @@ steps.md
 .env.*.local
 .context
 
-# LOGS
-server.log
 
 # IDE
 .idea/
@@ -24,8 +22,6 @@ Thumbs.db
 
 # Binary
 *.exe
-./server
-./server*
 .serena*
 
 # Archive directory (documentation, reports)
@@ -38,6 +34,4 @@ internal/database/db_gen/internal/database/db_gen/
 
 # Plugin binaries
 plugin_bins/*
-server
-server*
 ./plugins/windows-winrm/windows-winrm

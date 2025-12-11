@@ -1,20 +1,19 @@
 package api
 
 import (
-	"database/sql"
 	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nmslite/nmslite/internal/auth"
 	"github.com/nmslite/nmslite/internal/channels"
 	"github.com/nmslite/nmslite/internal/config"
-	"github.com/nmslite/nmslite/internal/database/db_gen"
 	"github.com/nmslite/nmslite/internal/middleware"
 )
 
 // Router creates and configures the API router
-func NewRouter(cfg *config.Config, authService *auth.Service, logger *slog.Logger, db *sql.DB, events *channels.EventChannels) http.Handler {
+func NewRouter(cfg *config.Config, authService *auth.Service, logger *slog.Logger, db *pgxpool.Pool, events *channels.EventChannels) http.Handler {
 	r := chi.NewRouter()
 
 	// Global middleware
@@ -35,9 +34,9 @@ func NewRouter(cfg *config.Config, authService *auth.Service, logger *slog.Logge
 	// Initialize handlers
 	healthHandler := NewHealthHandler()
 	authHandler := NewAuthHandler(authService)
-	credentialHandler := NewCredentialHandler(db_gen.New(db), authService)
-	discoveryHandler := NewDiscoveryHandler(db_gen.New(db), authService, events)
-	monitorHandler := NewMonitorHandler(db_gen.New(db))
+	credentialHandler := NewCredentialHandler(db, authService)
+	discoveryHandler := NewDiscoveryHandler(db, authService, events)
+	monitorHandler := NewMonitorHandler(db)
 	protocolHandler := NewProtocolHandler()
 
 	// Public routes (no auth required)
@@ -81,13 +80,14 @@ func NewRouter(cfg *config.Config, authService *auth.Service, logger *slog.Logge
 				r.Patch("/{id}", monitorHandler.Update)
 				r.Delete("/{id}", monitorHandler.Delete)
 				r.Patch("/{id}/restore", monitorHandler.Restore)
-				r.Get("/{id}/metrics", monitorHandler.GetMetrics)
 			})
+
+			// Metrics queries (batch)
+			r.Post("/metrics/query", monitorHandler.QueryMetrics)
 
 			// Protocols
 			r.Route("/protocols", func(r chi.Router) {
 				r.Get("/", protocolHandler.List)
-				r.Get("/{id}/schema", protocolHandler.GetSchema)
 			})
 		})
 	})
