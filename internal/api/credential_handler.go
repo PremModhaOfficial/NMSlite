@@ -3,6 +3,7 @@ package api
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -110,7 +111,7 @@ func (h *CredentialHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	profile, err := h.q.GetCredentialProfile(r.Context(), id)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			sendError(w, r, http.StatusNotFound, "NOT_FOUND", "Credential profile not found", nil)
 			return
 		}
@@ -170,7 +171,7 @@ func (h *CredentialHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	profile, err := h.q.UpdateCredentialProfile(r.Context(), params)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			sendError(w, r, http.StatusNotFound, "NOT_FOUND", "Credential profile not found", nil)
 			return
 		}

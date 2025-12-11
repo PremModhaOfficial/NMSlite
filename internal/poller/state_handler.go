@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/nmslite/nmslite/internal/channels"
 	"github.com/nmslite/nmslite/internal/database/db_gen"
-	"github.com/nmslite/nmslite/internal/eventbus"
 )
 
 // MonitorCache represents an in-memory cache of active monitors being polled.
@@ -70,11 +70,11 @@ func (mc *MonitorCache) Size() int {
 }
 
 // StateHandler manages monitor state transitions and coordinates with the database
-// and event bus. It handles state changes (monitor down/recovered) and updates the
+// and event channels. It handles state changes (monitor down/recovered) and updates the
 // monitor cache accordingly.
 type StateHandler struct {
-	// eventBus is used to subscribe to and publish events
-	eventBus *eventbus.EventBus
+	// events is the typed channel hub for monitor state events
+	events *channels.EventChannels
 
 	// db is the database connection for persisting state changes
 	db *sql.DB
@@ -104,7 +104,7 @@ type StateHandler struct {
 // NewStateHandler creates a new StateHandler with the specified dependencies.
 //
 // Parameters:
-//   - eventBus: the event bus for subscribing to monitor state events
+//   - events: the event channels for monitor state events
 //   - db: the database connection for persisting state changes
 //   - logger: the structured logger for event tracking
 //
@@ -113,23 +113,23 @@ type StateHandler struct {
 //
 // Example:
 //
-//	handler := NewStateHandler(eventBus, db, logger)
+//	handler := NewStateHandler(events, db, logger)
 //	go handler.Run(ctx)
-func NewStateHandler(eventBus *eventbus.EventBus, db *sql.DB, logger *slog.Logger) *StateHandler {
+func NewStateHandler(events *channels.EventChannels, db *sql.DB, logger *slog.Logger) *StateHandler {
 	return &StateHandler{
-		eventBus: eventBus,
-		db:       db,
-		querier:  db_gen.New(db),
-		logger:   logger,
-		cache:    NewMonitorCache(),
-		done:     make(chan struct{}),
+		events:  events,
+		db:      db,
+		querier: db_gen.New(db),
+		logger:  logger,
+		cache:   NewMonitorCache(),
+		done:    make(chan struct{}),
 	}
 }
 
 // Run starts the state handler event loop. It subscribes to monitor state change
-// events (TopicMonitorDown and TopicMonitorRecovered) and processes them concurrently.
+// events (TopicMonitorState) and processes them concurrently.
 //
-// This method blocks until the context is cancelled. It handles graceful shutdown
+// This method blocks until the context is canceled. It handles graceful shutdown
 // by ensuring all pending events are processed before returning.
 //
 // Parameters:
@@ -154,16 +154,12 @@ func (sh *StateHandler) Run(ctx context.Context) error {
 	sh.running = true
 	sh.mu.Unlock()
 
-	sh.logger.Info("State handler starting")
+	sh.logger.Info("State handler starting (channels-based)")
 
-	// Subscribe to monitor state change events
-	eventCh := sh.eventBus.SubscribeMultiple(
-		eventbus.TopicMonitorDown,
-		eventbus.TopicMonitorRecovered,
-	)
-
-	sh.wg.Add(1)
-	go sh.processEvents(ctx, eventCh)
+	// Start goroutines for each event type
+	sh.wg.Add(2)
+	go sh.processMonitorDownEvents(ctx)
+	go sh.processMonitorRecoveredEvents(ctx)
 
 	// Wait for context cancellation
 	<-ctx.Done()
@@ -183,46 +179,44 @@ func (sh *StateHandler) Run(ctx context.Context) error {
 	return nil
 }
 
-// processEvents continuously processes events from the event channel.
-// It dispatches events to the appropriate handler based on the event type.
-func (sh *StateHandler) processEvents(ctx context.Context, eventCh <-chan eventbus.Event) {
+// processMonitorDownEvents continuously processes MonitorDownEvents from the typed channel.
+func (sh *StateHandler) processMonitorDownEvents(ctx context.Context) {
 	defer sh.wg.Done()
 
 	for {
 		select {
-		case event, ok := <-eventCh:
+		case event, ok := <-sh.events.MonitorDown:
 			if !ok {
 				// Channel closed
 				return
 			}
+			// Handle the down event - already typed!
+			sh.handleMonitorDown(ctx, event)
 
-			// Route event to appropriate handler
-			switch event.Topic {
-			case eventbus.TopicMonitorDown:
-				if evt, ok := event.Payload.(eventbus.MonitorDownEvent); ok {
-					sh.handleMonitorDown(ctx, evt)
-				} else {
-					sh.logger.Warn("Invalid MonitorDownEvent payload",
-						"topic", event.Topic.String(),
-						"payload_type", fmt.Sprintf("%T", event.Payload),
-					)
-				}
+		case <-sh.done:
+			// Graceful shutdown signal
+			return
 
-			case eventbus.TopicMonitorRecovered:
-				if evt, ok := event.Payload.(eventbus.MonitorRecoveredEvent); ok {
-					sh.handleMonitorRecovered(ctx, evt)
-				} else {
-					sh.logger.Warn("Invalid MonitorRecoveredEvent payload",
-						"topic", event.Topic.String(),
-						"payload_type", fmt.Sprintf("%T", event.Payload),
-					)
-				}
+		case <-ctx.Done():
+			// Context cancelled
+			return
+		}
+	}
+}
 
-			default:
-				sh.logger.Warn("Unknown event topic received",
-					"topic", event.Topic.String(),
-				)
+// processMonitorRecoveredEvents continuously processes MonitorRecoveredEvents from the typed channel.
+func (sh *StateHandler) processMonitorRecoveredEvents(ctx context.Context) {
+	defer sh.wg.Done()
+
+	for {
+		select {
+		case event, ok := <-sh.events.MonitorRecovered:
+			if !ok {
+				// Channel closed
+				return
 			}
+			// Handle the recovered event - already typed!
+			sh.handleMonitorRecovered(ctx, event)
 
 		case <-sh.done:
 			// Graceful shutdown signal
@@ -243,8 +237,8 @@ func (sh *StateHandler) processEvents(ctx context.Context, eventCh <-chan eventb
 //
 // Parameters:
 //   - ctx: context for database operations
-//   - event: the monitor down event containing monitor details
-func (sh *StateHandler) handleMonitorDown(ctx context.Context, event eventbus.MonitorDownEvent) {
+//   - event: the monitor state event containing monitor details
+func (sh *StateHandler) handleMonitorDown(ctx context.Context, event channels.MonitorDownEvent) {
 	sh.logger.Info("Processing monitor down event",
 		"monitor_id", event.MonitorID.String(),
 		"ip_address", event.IP,
@@ -281,8 +275,8 @@ func (sh *StateHandler) handleMonitorDown(ctx context.Context, event eventbus.Mo
 //
 // Parameters:
 //   - ctx: context for database operations
-//   - event: the monitor recovered event containing monitor details
-func (sh *StateHandler) handleMonitorRecovered(ctx context.Context, event eventbus.MonitorRecoveredEvent) {
+//   - event: the monitor state event containing monitor details
+func (sh *StateHandler) handleMonitorRecovered(ctx context.Context, event channels.MonitorRecoveredEvent) {
 	sh.logger.Info("Processing monitor recovered event",
 		"monitor_id", event.MonitorID.String(),
 		"ip_address", event.IP,

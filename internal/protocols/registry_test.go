@@ -19,9 +19,9 @@ func TestRegistryInitialization(t *testing.T) {
 	}
 
 	expected := map[string]bool{
-		"winrm":     false,
-		"ssh":       false,
-		"snmp-v2c":  false,
+		"winrm":    false,
+		"ssh":      false,
+		"snmp-v2c": false,
 	}
 
 	for _, p := range protocols {

@@ -1,0 +1,10 @@
+{
+  "id": "windows-winrm",
+  "name": "Windows Server (WinRM)",
+  "version": "1.0.0",
+  "description": "Collects CPU, memory, disk, and network metrics from Windows servers via WinRM",
+  "protocol": "winrm",
+  "default_port": 5985,
+  "supported_metrics": ["host.cpu", "host.memory", "host.storage", "net.interface"],
+  "timeout_ms": 10000
+}

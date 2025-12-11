@@ -5,10 +5,17 @@ ORDER BY created_at DESC;
 
 -- name: CreateMonitor :one
 INSERT INTO monitors (
-    display_name, hostname, ip_address, plugin_id, credential_profile_id, 
-    discovery_profile_id, polling_interval_seconds, port
+    display_name,
+    hostname,
+    ip_address,
+    plugin_id,
+    credential_profile_id,
+    discovery_profile_id,
+    port,
+    polling_interval_seconds,
+    status
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8
+    $1, $2, $3, $4, $5, $6, $7, COALESCE($8, 60), COALESCE($9, 'active')
 )
 RETURNING *;
 

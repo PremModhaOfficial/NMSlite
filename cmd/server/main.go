@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"log/slog"
@@ -13,10 +14,14 @@ import (
 
 	"github.com/nmslite/nmslite/internal/api"
 	"github.com/nmslite/nmslite/internal/auth"
+	"github.com/nmslite/nmslite/internal/channels"
 	"github.com/nmslite/nmslite/internal/config"
+	"github.com/nmslite/nmslite/internal/credentials"
 	"github.com/nmslite/nmslite/internal/database"
 	"github.com/nmslite/nmslite/internal/database/db_gen"
-	"github.com/nmslite/nmslite/internal/eventbus"
+	"github.com/nmslite/nmslite/internal/discovery"
+	"github.com/nmslite/nmslite/internal/plugins"
+	"github.com/nmslite/nmslite/internal/poller"
 )
 
 func main() {
@@ -61,22 +66,91 @@ func main() {
 		log.Fatalf("Failed to initialize auth service: %v", err)
 	}
 
-	// Initialize EventBus
+	// Initialize EventChannels (replaces EventBus)
 	eventBusSize := cfg.EventBus.DiscoveryEventsChannelSize
 	if eventBusSize <= 0 {
 		eventBusSize = 50 // default buffer size
 	}
-	eb := eventbus.NewEventBus(eventBusSize)
-	logger.Info("EventBus initialized", "buffer_size", eventBusSize)
 
-	// Start StateHandler goroutine for event processing
-	go eventbus.StartStateHandler(eb, logger)
+	// Create context for graceful shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	// Start DiscoveryWorker goroutine for async discovery jobs
-	go eventbus.StartDiscoveryWorker(eb, db_gen.New(db), logger)
+	channelsCfg := channels.EventChannelsConfig{
+		DiscoveryBufferSize:    eventBusSize,
+		MonitorStateBufferSize: cfg.EventBus.StateSignalChannelSize,
+		PluginBufferSize:       100,
+		CacheBufferSize:        cfg.EventBus.CacheEventsChannelSize,
+	}
+	events := channels.NewEventChannels(ctx, channelsCfg)
+	defer events.Close()
+	logger.Info("EventChannels initialized",
+		"discovery_buffer", channelsCfg.DiscoveryBufferSize,
+		"monitor_state_buffer", channelsCfg.MonitorStateBufferSize,
+	)
 
-	// Create API router and pass eventBus
-	router := api.NewRouter(cfg, authService, logger, db, eb)
+	// Start discovery completion logger
+	channels.StartDiscoveryCompletionLogger(ctx, events, logger)
+
+	// Initialize and start StateHandler
+	stateHandler := poller.NewStateHandler(events, db, logger)
+	go func() {
+		if err := stateHandler.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			logger.Error("State handler error", "error", err)
+		}
+	}()
+
+	// Load active monitors into cache
+	if err := stateHandler.LoadActiveMonitors(ctx); err != nil {
+		logger.Error("Failed to load active monitors", "error", err)
+	}
+
+	// Initialize Plugin Registry
+	pluginRegistry := plugins.NewRegistry(cfg.Plugins.Directory, logger)
+	if err := pluginRegistry.Scan(); err != nil {
+		logger.Error("Failed to scan plugins", "error", err)
+	} else {
+		pluginList := pluginRegistry.List()
+		logger.Info("Plugins loaded", "count", len(pluginList))
+		for _, p := range pluginList {
+			logger.Info("  Plugin registered",
+				"id", p.Manifest.ID,
+				"name", p.Manifest.Name,
+				"version", p.Manifest.Version,
+				"port", p.Manifest.DefaultPort,
+			)
+		}
+	}
+
+	// Initialize Plugin Executor
+	pluginExecutor := plugins.NewExecutor(
+		pluginRegistry,
+		time.Duration(cfg.Poller.PluginTimeoutMS)*time.Millisecond,
+		logger,
+	)
+
+	// Initialize Credential Service
+	credentialService := credentials.NewService(authService, db_gen.New(db))
+
+	// Initialize Discovery Worker (with plugin support and channels)
+	discoveryWorker := discovery.NewWorker(
+		events,
+		db_gen.New(db),
+		pluginRegistry,
+		pluginExecutor,
+		credentialService,
+		logger,
+	)
+
+	// Start Discovery Worker
+	go func() {
+		if err := discoveryWorker.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			logger.Error("Discovery worker error", "error", err)
+		}
+	}()
+
+	// Create API router with EventChannels
+	router := api.NewRouter(cfg, authService, logger, db, events)
 
 	// Create HTTP server
 	srv := &http.Server{
@@ -89,7 +163,7 @@ func main() {
 	// Start server in goroutine
 	go func() {
 		logger.Info("HTTP server listening", "addr", srv.Addr)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("Server failed", "error", err)
 			os.Exit(1)
 		}
@@ -102,10 +176,13 @@ func main() {
 
 	logger.Info("Shutting down server...")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	// Cancel the main context to signal all workers to stop
+	cancel()
 
-	if err := srv.Shutdown(ctx); err != nil {
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer shutdownCancel()
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
 		logger.Error("Server forced to shutdown", "error", err)
 	}
 

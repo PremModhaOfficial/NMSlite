@@ -15,11 +15,11 @@ type Registry struct {
 
 // Protocol represents a protocol definition
 type Protocol struct {
-	ID           string `json:"id"`
-	Name         string `json:"name"`
-	Description  string `json:"description"`
-	DefaultPort  int    `json:"default_port"`
-	Version      string `json:"version"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	DefaultPort int    `json:"default_port"`
+	Version     string `json:"version"`
 }
 
 var (

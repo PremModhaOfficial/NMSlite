@@ -7,14 +7,14 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/nmslite/nmslite/internal/auth"
+	"github.com/nmslite/nmslite/internal/channels"
 	"github.com/nmslite/nmslite/internal/config"
 	"github.com/nmslite/nmslite/internal/database/db_gen"
-	"github.com/nmslite/nmslite/internal/eventbus"
 	"github.com/nmslite/nmslite/internal/middleware"
 )
 
 // Router creates and configures the API router
-func NewRouter(cfg *config.Config, authService *auth.Service, logger *slog.Logger, db *sql.DB, eb *eventbus.EventBus) http.Handler {
+func NewRouter(cfg *config.Config, authService *auth.Service, logger *slog.Logger, db *sql.DB, events *channels.EventChannels) http.Handler {
 	r := chi.NewRouter()
 
 	// Global middleware
@@ -36,7 +36,7 @@ func NewRouter(cfg *config.Config, authService *auth.Service, logger *slog.Logge
 	healthHandler := NewHealthHandler()
 	authHandler := NewAuthHandler(authService)
 	credentialHandler := NewCredentialHandler(db_gen.New(db), authService)
-	discoveryHandler := NewDiscoveryHandler(db_gen.New(db), authService, eb)
+	discoveryHandler := NewDiscoveryHandler(db_gen.New(db), authService, events)
 	monitorHandler := NewMonitorHandler(db_gen.New(db))
 	protocolHandler := NewProtocolHandler()
 
@@ -71,7 +71,6 @@ func NewRouter(cfg *config.Config, authService *auth.Service, logger *slog.Logge
 				r.Delete("/{id}", discoveryHandler.Delete)
 				r.Post("/{id}/run", discoveryHandler.Run)
 				r.Get("/{id}/results", discoveryHandler.GetResults)
-				r.Get("/{id}/jobs/{job_id}", discoveryHandler.GetJob)
 			})
 
 			// Monitors (Devices)

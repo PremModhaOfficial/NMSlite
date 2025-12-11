@@ -3,13 +3,15 @@ package api
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
+
+	"net"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/nmslite/nmslite/internal/database/db_gen"
 	"github.com/sqlc-dev/pqtype"
-	"net"
 )
 
 // Helper to convert string IP to pqtype.Inet
@@ -61,7 +63,7 @@ func (h *MonitorHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	monitor, err := h.q.GetMonitor(r.Context(), id)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			sendError(w, r, http.StatusNotFound, "NOT_FOUND", "Monitor not found", nil)
 			return
 		}
@@ -99,7 +101,7 @@ func (h *MonitorHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// Get existing to merge
 	existing, err := h.q.GetMonitor(r.Context(), id)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			sendError(w, r, http.StatusNotFound, "NOT_FOUND", "Monitor not found", nil)
 			return
 		}
