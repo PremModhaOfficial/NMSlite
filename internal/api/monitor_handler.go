@@ -43,6 +43,93 @@ func (h *MonitorHandler) List(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Create handles POST /api/v1/monitors
+// Manual provisioning of a monitor without discovery
+func (h *MonitorHandler) Create(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		DisplayName            string `json:"display_name"`
+		Hostname               string `json:"hostname"`
+		IPAddress              string `json:"ip_address"`
+		PluginID               string `json:"plugin_id"`
+		CredentialProfileID    string `json:"credential_profile_id"`
+		PollingIntervalSeconds *int32 `json:"polling_interval_seconds"`
+		Port                   *int32 `json:"port"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		sendError(w, r, http.StatusBadRequest, "INVALID_BODY", "Invalid JSON body", err)
+		return
+	}
+
+	// Validate required fields
+	if input.IPAddress == "" {
+		sendError(w, r, http.StatusBadRequest, "VALIDATION_ERROR", "ip_address is required", nil)
+		return
+	}
+	if input.PluginID == "" {
+		sendError(w, r, http.StatusBadRequest, "VALIDATION_ERROR", "plugin_id is required", nil)
+		return
+	}
+
+	// Parse IP address
+	ipAddr, err := database.StringToInet(input.IPAddress)
+	if err != nil {
+		sendError(w, r, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid IP address format", err)
+		return
+	}
+
+	// Parse credential profile ID if provided
+	var credUUID uuid.NullUUID
+	if input.CredentialProfileID != "" {
+		parsed, err := uuid.Parse(input.CredentialProfileID)
+		if err != nil {
+			sendError(w, r, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid credential_profile_id format", err)
+			return
+		}
+		credUUID = uuid.NullUUID{UUID: parsed, Valid: true}
+	}
+
+	// Build params - use defaults for display_name/hostname if not provided
+	displayName := input.DisplayName
+	if displayName == "" {
+		displayName = input.IPAddress
+	}
+	hostname := input.Hostname
+	if hostname == "" {
+		hostname = input.IPAddress
+	}
+
+	params := db_gen.CreateMonitorParams{
+		DisplayName:         pgtype.Text{String: displayName, Valid: true},
+		Hostname:            pgtype.Text{String: hostname, Valid: true},
+		IpAddress:           ipAddr,
+		PluginID:            input.PluginID,
+		CredentialProfileID: credUUID,
+		DiscoveryProfileID:  uuid.NullUUID{Valid: false}, // null for manual creation
+		Port:                pgtype.Int4{Int32: 0, Valid: false},
+		Column8:             nil, // Use SQL default (60)
+		Column9:             nil, // Use SQL default ('active')
+	}
+
+	// Set port if provided
+	if input.Port != nil && *input.Port > 0 {
+		params.Port = pgtype.Int4{Int32: *input.Port, Valid: true}
+	}
+
+	// Set polling interval if provided
+	if input.PollingIntervalSeconds != nil && *input.PollingIntervalSeconds > 0 {
+		params.Column8 = *input.PollingIntervalSeconds
+	}
+
+	monitor, err := h.q.CreateMonitor(r.Context(), params)
+	if err != nil {
+		sendError(w, r, http.StatusInternalServerError, "DB_ERROR", "Failed to create monitor", err)
+		return
+	}
+
+	sendJSON(w, http.StatusCreated, monitor)
+}
+
 // Get handles GET /api/v1/monitors/{id}
 func (h *MonitorHandler) Get(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")

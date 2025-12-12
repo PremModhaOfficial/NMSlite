@@ -56,11 +56,13 @@ Follow this sequence for a complete test:
    ├── GET  /monitors         → List discovered devices
    ├── GET  /monitors/{id}    → Get device details
    ├── PATCH /monitors/{id}   → Update configuration
-   ├── GET  /monitors/{id}/metrics → Get performance data
    ├── DELETE /monitors/{id}  → Soft delete
    └── PATCH /monitors/{id}/restore → Restore deleted
 
-5. Protocols (reference)
+5. Metrics (batch queries)
+   └── POST /metrics/query    → Query metrics for one or more monitors
+
+6. Protocols (reference)
    └── GET  /protocols        → List all supported protocols
 ```
 
@@ -232,6 +234,137 @@ Follow this sequence for a complete test:
 | `CONFLICT` | 409 | Resource already exists |
 | `UNPROCESSABLE_ENTITY` | 422 | Business logic error |
 | `INTERNAL_ERROR` | 500 | Server error |
+
+## Metrics Query Examples
+
+The `/api/v1/metrics/query` endpoint supports batch queries across multiple devices with advanced filtering.
+
+### Basic Query - Single Device
+```json
+{
+    "device_ids": ["550e8400-e29b-41d4-a716-446655440000"],
+    "start": "2025-12-01T00:00:00Z",
+    "end": "2025-12-31T23:59:59Z",
+    "metric_groups": ["host.cpu", "host.memory"],
+    "limit": 50
+}
+```
+
+**Response Format:**
+```json
+{
+    "data": {
+        "550e8400-e29b-41d4-a716-446655440000": [
+            {
+                "timestamp": "2025-12-11T10:30:00Z",
+                "metric_group": "host.cpu",
+                "metric_name": "usage_percent",
+                "value": 45.2,
+                "unit": "percent",
+                "tags": {"core": "0"}
+            }
+        ]
+    },
+    "count": 10,
+    "query": {...}
+}
+```
+
+### Multi-Device Query
+```json
+{
+    "device_ids": [
+        "550e8400-e29b-41d4-a716-446655440000",
+        "660e8400-e29b-41d4-a716-446655440001"
+    ],
+    "start": "2025-12-01T00:00:00Z",
+    "end": "2025-12-31T23:59:59Z",
+    "limit": 100
+}
+```
+Results are grouped by `device_id` in the response. Invalid device IDs are silently ignored.
+
+### Latest Metrics Only
+```json
+{
+    "device_ids": ["550e8400-e29b-41d4-a716-446655440000"],
+    "start": "2025-12-01T00:00:00Z",
+    "end": "2025-12-31T23:59:59Z",
+    "metric_groups": ["host.cpu", "host.memory"],
+    "latest": true
+}
+```
+Returns only the most recent metric per device/metric_group combination - useful for dashboards.
+
+### Query with Tag Filters
+```json
+{
+    "device_ids": ["550e8400-e29b-41d4-a716-446655440000"],
+    "start": "2025-12-01T00:00:00Z",
+    "end": "2025-12-31T23:59:59Z",
+    "metric_groups": ["host.cpu"],
+    "tag_filters": [
+        {"key": "core", "op": "eq", "values": ["0"]},
+        {"key": "type", "op": "in", "values": ["user", "system"]}
+    ],
+    "limit": 100
+}
+```
+
+**Available Tag Filter Operators:**
+
+| Operator | Description | Example |
+|----------|-------------|---------|
+| `eq` | Equals (exact match) | `{"key": "core", "op": "eq", "values": ["0"]}` |
+| `in` | In list (matches any) | `{"key": "core", "op": "in", "values": ["0", "1", "2"]}` |
+| `like` | SQL LIKE pattern (% wildcards) | `{"key": "device", "op": "like", "values": ["eth%"]}` |
+| `exists` | Tag key exists | `{"key": "error", "op": "exists", "values": []}` |
+| `gt` | Greater than (numeric) | `{"key": "threshold", "op": "gt", "values": ["80"]}` |
+| `lt` | Less than (numeric) | `{"key": "threshold", "op": "lt", "values": ["20"]}` |
+| `gte` | Greater than or equal | `{"key": "priority", "op": "gte", "values": ["5"]}` |
+| `lte` | Less than or equal | `{"key": "priority", "op": "lte", "values": ["3"]}` |
+
+Multiple filters are combined with **AND** logic.
+
+### Common Use Cases
+
+**Get CPU metrics for specific cores:**
+```json
+{
+    "device_ids": ["..."],
+    "start": "2025-12-11T00:00:00Z",
+    "end": "2025-12-11T23:59:59Z",
+    "metric_groups": ["host.cpu"],
+    "tag_filters": [
+        {"key": "core", "op": "in", "values": ["0", "1", "2", "3"]}
+    ]
+}
+```
+
+**Get network metrics for specific interfaces:**
+```json
+{
+    "device_ids": ["..."],
+    "start": "2025-12-11T00:00:00Z",
+    "end": "2025-12-11T23:59:59Z",
+    "metric_groups": ["net.interface"],
+    "tag_filters": [
+        {"key": "interface", "op": "like", "values": ["eth%"]}
+    ]
+}
+```
+
+**Find metrics exceeding thresholds:**
+```json
+{
+    "device_ids": ["..."],
+    "start": "2025-12-11T00:00:00Z",
+    "end": "2025-12-11T23:59:59Z",
+    "tag_filters": [
+        {"key": "threshold_exceeded", "op": "eq", "values": ["true"]}
+    ]
+}
+```
 
 ## Tips
 

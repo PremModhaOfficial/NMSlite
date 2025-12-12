@@ -24,8 +24,7 @@ type CredentialProfile struct {
 type DiscoveryProfile struct {
 	ID                   uuid.UUID  `db:"id"`
 	Name                 string     `db:"name"`
-	TargetType           string     `db:"target_type"`  // 'cidr', 'range', 'ip'
-	TargetValue          string     `db:"target_value"` // e.g., "192.168.1.0/24"
+	TargetValue          string     `db:"target_value"` // e.g., "192.168.1.0/24" - type auto-detected
 	Ports                JSONArray  `db:"ports"`        // [22, 5985, 443]
 	PortScanTimeoutMs    int        `db:"port_scan_timeout_ms"`
 	CredentialProfileIDs JSONArray  `db:"credential_profile_ids"` // Array of UUIDs

@@ -29,6 +29,18 @@
 			"description": "JWT token - auto-populated after login"
 		},
 		{
+			"key": "admin_username",
+			"value": "admin",
+			"type": "string",
+			"description": "Default admin username"
+		},
+		{
+			"key": "admin_password",
+			"value": "Admin@123",
+			"type": "string",
+			"description": "Default admin password"
+		},
+		{
 			"key": "credential_id",
 			"value": "",
 			"type": "string",
@@ -544,10 +556,10 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"name\": \"Network Scan\",\n    \"target_type\": \"cidr\",\n    \"target_value\": \"192.168.1.0/24\",\n    \"ports\": [22, 161, 443, 5985],\n    \"port_scan_timeout_ms\": 5000,\n    \"credential_profile_ids\": [\"{{credential_id}}\"]\n}"
+							"raw": "{\n    \"name\": \"Network Scan\",\n    \"target_value\": \"192.168.1.0/24\",\n    \"ports\": [22, 161, 443, 5985],\n    \"port_scan_timeout_ms\": 5000,\n    \"credential_profile_ids\": [\"{{credential_id}}\"]\n}"
 						},
 						"url": "{{base_url}}/api/v1/discoveries",
-						"description": "Create a new discovery profile using CIDR notation."
+						"description": "Create a new discovery profile using CIDR notation. Target type is auto-detected from the format (contains '/' = CIDR)."
 					},
 					"response": [],
 					"event": [
@@ -564,9 +576,9 @@
 									"    pm.expect(jsonData.id).to.exist;",
 									"});",
 									"",
-									"pm.test('Response has correct target_type', function () {",
+									"pm.test('Response has target_value', function () {",
 									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.target_type).to.eql('cidr');",
+									"    pm.expect(jsonData.target_value).to.exist;",
 									"});",
 									"",
 									"// Extract and save discovery_id",
@@ -596,10 +608,10 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"name\": \"Datacenter IP Range Scan\",\n    \"target_type\": \"range\",\n    \"target_value\": \"192.168.1.1-192.168.1.50\",\n    \"ports\": [22, 161, 5985],\n    \"port_scan_timeout_ms\": 3000,\n    \"credential_profile_ids\": [\"{{credential_id}}\"]\n}"
+							"raw": "{\n    \"name\": \"Datacenter IP Range Scan\",\n    \"target_value\": \"192.168.1.1-192.168.1.50\",\n    \"ports\": [22, 161, 5985],\n    \"port_scan_timeout_ms\": 3000,\n    \"credential_profile_ids\": [\"{{credential_id}}\"]\n}"
 						},
 						"url": "{{base_url}}/api/v1/discoveries",
-						"description": "Create a new discovery profile using IP range."
+						"description": "Create a new discovery profile using IP range. Target type is auto-detected from the format (contains '-' = Range)."
 					},
 					"response": [],
 					"event": [
@@ -616,9 +628,9 @@
 									"    pm.expect(jsonData.id).to.exist;",
 									"});",
 									"",
-									"pm.test('Response has correct target_type', function () {",
+									"pm.test('Response has target_value', function () {",
 									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.target_type).to.eql('range');",
+									"    pm.expect(jsonData.target_value).to.exist;",
 									"});"
 								],
 								"type": "text/javascript"
@@ -638,10 +650,10 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"name\": \"Single Server Discovery\",\n    \"target_type\": \"ip\",\n    \"target_value\": \"192.168.1.100\",\n    \"ports\": [22, 5985],\n    \"port_scan_timeout_ms\": 5000,\n    \"credential_profile_ids\": [\"{{credential_id}}\"]\n}"
+							"raw": "{\n    \"name\": \"Single Server Discovery\",\n    \"target_value\": \"192.168.1.100\",\n    \"ports\": [22, 5985],\n    \"port_scan_timeout_ms\": 5000,\n    \"credential_profile_ids\": [\"{{credential_id}}\"]\n}"
 						},
 						"url": "{{base_url}}/api/v1/discoveries",
-						"description": "Create a new discovery profile for a single IP address."
+						"description": "Create a new discovery profile for a single IP address. Target type is auto-detected from the format (valid IP = Single IP)."
 					},
 					"response": [],
 					"event": [
@@ -658,9 +670,9 @@
 									"    pm.expect(jsonData.id).to.exist;",
 									"});",
 									"",
-									"pm.test('Response has correct target_type', function () {",
+									"pm.test('Response has target_value', function () {",
 									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.target_type).to.eql('ip');",
+									"    pm.expect(jsonData.target_value).to.exist;",
 									"});"
 								],
 								"type": "text/javascript"
@@ -696,9 +708,9 @@
 									"    pm.expect(jsonData.name).to.exist;",
 									"});",
 									"",
-									"pm.test('Response has target_type', function () {",
+									"pm.test('Response has target_value', function () {",
 									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.target_type).to.exist;",
+									"    pm.expect(jsonData.target_value).to.exist;",
 									"});"
 								],
 								"type": "text/javascript"
@@ -718,10 +730,10 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"name\": \"Updated Network Scan\",\n    \"target_type\": \"cidr\",\n    \"target_value\": \"192.168.1.0/25\",\n    \"ports\": [22, 5985],\n    \"port_scan_timeout_ms\": 3000,\n    \"credential_profile_ids\": [\"{{credential_id}}\"]\n}"
+							"raw": "{\n    \"name\": \"Updated Network Scan\",\n    \"target_value\": \"192.168.1.0/25\",\n    \"ports\": [22, 5985],\n    \"port_scan_timeout_ms\": 3000,\n    \"credential_profile_ids\": [\"{{credential_id}}\"]\n}"
 						},
 						"url": "{{base_url}}/api/v1/discoveries/{{discovery_id}}",
-						"description": "Update an existing discovery profile."
+						"description": "Update an existing discovery profile. Target type is auto-detected from the target_value format."
 					},
 					"response": [],
 					"event": [
@@ -833,6 +845,68 @@
 			"name": "Monitors",
 			"description": "Monitor (Device) management endpoints (protected). Monitors are typically created via discovery.",
 			"item": [
+				{
+					"name": "Create Monitor (Manual)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"display_name\": \"web-prod-01\",\n    \"hostname\": \"web-prod-01.internal\",\n    \"ip_address\": \"192.168.10.20\",\n    \"plugin_id\": \"windows-winrm\",\n    \"credential_profile_id\": \"{{credential_id}}\",\n    \"polling_interval_seconds\": 60,\n    \"port\": 5985\n}"
+						},
+						"url": "{{base_url}}/api/v1/monitors",
+						"description": "Manually create a monitor without discovery. Useful for 'Pet' servers outside discovery ranges, CI/CD pipeline integration, or quick testing."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 201', function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"",
+									"pm.test('Response has id', function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.id).to.exist;",
+									"});",
+									"",
+									"pm.test('Response has ip_address', function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.ip_address).to.exist;",
+									"});",
+									"",
+									"pm.test('Response has plugin_id', function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.plugin_id).to.exist;",
+									"});",
+									"",
+									"pm.test('Response has status active', function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.status).to.exist;",
+									"});",
+									"",
+									"// Save monitor_id if not already set",
+									"if (pm.response.code === 201) {",
+									"    const jsonData = pm.response.json();",
+									"    if (jsonData.id) {",
+									"        pm.collectionVariables.set('monitor_id', jsonData.id);",
+									"        pm.environment.set('monitor_id', jsonData.id);",
+									"        console.log('Monitor ID saved:', jsonData.id);",
+									"    }",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
 				{
 					"name": "List All Monitors",
 					"request": {
@@ -1043,37 +1117,29 @@
 							}
 						}
 					]
-				},
+				}
+			]
+		},
+		{
+			"name": "Metrics",
+			"description": "Batch metrics query endpoints for querying metrics across multiple devices (protected)",
+			"item": [
 				{
-					"name": "Get Monitor Metrics",
+					"name": "Query Metrics - Single Device",
 					"request": {
-						"method": "GET",
-						"header": [],
-						"url": {
-							"raw": "{{base_url}}/api/v1/monitors/{{monitor_id}}/metrics?metric_group=host.cpu",
-							"host": ["{{base_url}}"],
-							"path": ["api", "v1", "monitors", "{{monitor_id}}", "metrics"],
-							"query": [
-								{
-									"key": "metric_group",
-									"value": "host.cpu",
-									"description": "Required. Options: host.cpu, host.memory, host.storage, net.interface"
-								},
-								{
-									"key": "start_time",
-									"value": "2023-12-07T11:00:00Z",
-									"disabled": true,
-									"description": "ISO 8601 timestamp (default: 1 hour ago)"
-								},
-								{
-									"key": "end_time",
-									"value": "2023-12-07T12:00:00Z",
-									"disabled": true,
-									"description": "ISO 8601 timestamp (default: now)"
-								}
-							]
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"device_ids\": [\"{{monitor_id}}\"],\n    \"start\": \"2025-12-01T00:00:00Z\",\n    \"end\": \"2025-12-31T23:59:59Z\",\n    \"metric_groups\": [\"host.cpu\", \"host.memory\"],\n    \"limit\": 50\n}"
 						},
-						"description": "Get metrics for a monitor. Supports filtering by time range and aggregation."
+						"url": "{{base_url}}/api/v1/metrics/query",
+						"description": "Query metrics for a single device. Results are grouped by device_id in the response."
 					},
 					"response": [],
 					"event": [
@@ -1083,6 +1149,21 @@
 								"exec": [
 									"pm.test('Status code is 200', function () {",
 									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test('Response has data object', function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.data).to.exist;",
+									"});",
+									"",
+									"pm.test('Response has count', function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.count).to.exist;",
+									"});",
+									"",
+									"pm.test('Response has query object', function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.query).to.exist;",
 									"});"
 								],
 								"type": "text/javascript"
@@ -1091,60 +1172,23 @@
 					]
 				},
 				{
-					"name": "Query Metrics",
+					"name": "Query Metrics - Multiple Devices",
 					"request": {
 						"method": "POST",
 						"header": [
 							{
 								"key": "Content-Type",
 								"value": "application/json"
-							},
-							{
-								"key": "Authorization",
-								"value": "Bearer {{token}}"
 							}
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"start\": \"2025-12-11T00:00:00Z\",\n    \"end\": \"2025-12-11T12:00:00Z\",\n    \"metric_groups\": [\"host.cpu\", \"host.memory\"],\n    \"tag_filters\": [\n        {\n            \"key\": \"core\",\n            \"op\": \"in\",\n            \"values\": [\"0\", \"1\", \"2\", \"3\"]\n        },\n        {\n            \"key\": \"type\",\n            \"op\": \"eq\",\n            \"values\": [\"user\"]\n        }\n    ],\n    \"limit\": 500,\n    \"latest\": false\n}"
+							"raw": "{\n    \"device_ids\": [\"{{monitor_id}}\", \"00000000-0000-0000-0000-000000000000\"],\n    \"start\": \"2025-12-01T00:00:00Z\",\n    \"end\": \"2025-12-31T23:59:59Z\",\n    \"limit\": 100\n}"
 						},
-						"url": "{{base_url}}/api/v1/monitors/{{monitor_id}}/metrics/query",
-						"description": "Query metrics with dynamic filters and advanced filtering capabilities.\n\n**Purpose:**\nThis endpoint allows you to query metrics with fine-grained control over time ranges, metric groups, and tag-based filtering. It's designed for flexible metric retrieval with support for complex filtering scenarios.\n\n**Supported Operators:**\n- `eq` - Equals (exact match)\n- `in` - In list (matches any value in the provided array)\n- `like` - SQL LIKE pattern matching (% wildcards supported)\n- `exists` - Tag key exists (values array can be empty)\n- `gt` - Greater than (numeric comparison)\n- `lt` - Less than (numeric comparison)\n- `gte` - Greater than or equal to (numeric comparison)\n- `lte` - Less than or equal to (numeric comparison)\n\n**Parameters:**\n- `start` (required): ISO 8601 timestamp for query start time\n- `end` (required): ISO 8601 timestamp for query end time\n- `metric_groups` (optional): Array of metric group names to filter by (e.g., [\"host.cpu\", \"host.memory\"])\n- `tag_filters` (optional): Array of tag filter objects with `key`, `op`, and `values` fields\n- `limit` (optional): Maximum number of metrics to return (default: 100, max: 1000)\n- `latest` (optional): If true, returns only the most recent metric per metric_group (default: false)\n\n**Example Use Cases:**\n1. Get all CPU metrics for specific cores: Use `op: \"in\"` with core IDs\n2. Get metrics for a specific type: Use `op: \"eq\"` for exact match\n3. Get metrics where a tag exists: Use `op: \"exists\"`\n4. Get metrics with numeric filtering: Use `op: \"gt\"`, `\"lt\"`, `\"gte\"`, or `\"lte\"`\n5. Get latest metrics only: Set `latest: true`"
+						"url": "{{base_url}}/api/v1/metrics/query",
+						"description": "Query metrics for multiple devices. Invalid device IDs are silently ignored. Results are grouped by device_id."
 					},
-					"response": [
-						{
-							"name": "Successful Query",
-							"originalRequest": {
-								"method": "POST",
-								"header": [
-									{
-										"key": "Content-Type",
-										"value": "application/json"
-									},
-									{
-										"key": "Authorization",
-										"value": "Bearer {{token}}"
-									}
-								],
-								"body": {
-									"mode": "raw",
-									"raw": "{\n    \"start\": \"2025-12-11T00:00:00Z\",\n    \"end\": \"2025-12-11T12:00:00Z\",\n    \"metric_groups\": [\"host.cpu\", \"host.memory\"],\n    \"tag_filters\": [\n        {\n            \"key\": \"core\",\n            \"op\": \"in\",\n            \"values\": [\"0\", \"1\", \"2\", \"3\"]\n        },\n        {\n            \"key\": \"type\",\n            \"op\": \"eq\",\n            \"values\": [\"user\"]\n        }\n    ],\n    \"limit\": 500,\n    \"latest\": false\n}"
-								},
-								"url": "{{base_url}}/api/v1/monitors/{{monitor_id}}/metrics/query"
-							},
-							"status": "OK",
-							"code": 200,
-							"_postman_previewlanguage": "json",
-							"header": [
-								{
-									"key": "Content-Type",
-									"value": "application/json"
-								}
-							],
-							"cookie": [],
-							"body": "{\n    \"metrics\": [\n        {\n            \"id\": 1234,\n            \"monitor_id\": \"mon_abc123\",\n            \"metric_group\": \"host.cpu\",\n            \"metric_name\": \"usage_percent\",\n            \"value\": 45.2,\n            \"unit\": \"percent\",\n            \"timestamp\": \"2025-12-11T10:30:00Z\",\n            \"tags\": {\n                \"core\": \"0\",\n                \"type\": \"user\"\n            }\n        },\n        {\n            \"id\": 1235,\n            \"monitor_id\": \"mon_abc123\",\n            \"metric_group\": \"host.memory\",\n            \"metric_name\": \"usage_percent\",\n            \"value\": 67.8,\n            \"unit\": \"percent\",\n            \"timestamp\": \"2025-12-11T10:30:00Z\",\n            \"tags\": {\n                \"type\": \"physical\"\n            }\n        }\n    ],\n    \"total\": 2,\n    \"limit\": 500,\n    \"query\": {\n        \"start\": \"2025-12-11T00:00:00Z\",\n        \"end\": \"2025-12-11T12:00:00Z\",\n        \"metric_groups\": [\"host.cpu\", \"host.memory\"],\n        \"tag_filters\": [\n            {\n                \"key\": \"core\",\n                \"op\": \"in\",\n                \"values\": [\"0\", \"1\", \"2\", \"3\"]\n            },\n            {\n                \"key\": \"type\",\n                \"op\": \"eq\",\n                \"values\": [\"user\"]\n            }\n        ],\n        \"latest\": false\n    }\n}"
-						}
-					],
+					"response": [],
 					"event": [
 						{
 							"listen": "test",
@@ -1154,19 +1198,93 @@
 									"    pm.response.to.have.status(200);",
 									"});",
 									"",
-									"pm.test('Response has metrics array', function () {",
+									"pm.test('Response has data object', function () {",
 									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.metrics).to.be.an('array');",
+									"    pm.expect(jsonData.data).to.exist;",
 									"});",
 									"",
-									"pm.test('Response has total count', function () {",
+									"pm.test('Response has count', function () {",
 									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.total).to.exist;",
+									"    pm.expect(jsonData.count).to.exist;",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Query Metrics - Latest Only",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"device_ids\": [\"{{monitor_id}}\"],\n    \"start\": \"2025-12-01T00:00:00Z\",\n    \"end\": \"2025-12-31T23:59:59Z\",\n    \"metric_groups\": [\"host.cpu\", \"host.memory\"],\n    \"latest\": true\n}"
+						},
+						"url": "{{base_url}}/api/v1/metrics/query",
+						"description": "Get only the latest metric per device/metric_group combination. Useful for dashboards showing current status."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
 									"});",
 									"",
-									"pm.test('Response has query object', function () {",
+									"pm.test('Response has data object', function () {",
 									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.query).to.exist;",
+									"    pm.expect(jsonData.data).to.exist;",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Query Metrics - With Tag Filters",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"device_ids\": [\"{{monitor_id}}\"],\n    \"start\": \"2025-12-01T00:00:00Z\",\n    \"end\": \"2025-12-31T23:59:59Z\",\n    \"metric_groups\": [\"host.cpu\"],\n    \"tag_filters\": [\n        {\n            \"key\": \"core\",\n            \"op\": \"eq\",\n            \"values\": [\"0\"]\n        }\n    ],\n    \"limit\": 100\n}"
+						},
+						"url": "{{base_url}}/api/v1/metrics/query",
+						"description": "Query metrics with tag-based filtering for fine-grained metric selection.\n\n**Supported Tag Filter Operators:**\n\n1. **eq** (Equals) - Exact match\n   ```json\n   {\"key\": \"core\", \"op\": \"eq\", \"values\": [\"0\"]}\n   ```\n\n2. **in** (In List) - Matches any value in array\n   ```json\n   {\"key\": \"core\", \"op\": \"in\", \"values\": [\"0\", \"1\", \"2\", \"3\"]}\n   ```\n\n3. **like** (Pattern Match) - SQL LIKE with % wildcards\n   ```json\n   {\"key\": \"device\", \"op\": \"like\", \"values\": [\"eth%\"]}\n   ```\n\n4. **exists** (Key Exists) - Check if tag key exists\n   ```json\n   {\"key\": \"error\", \"op\": \"exists\", \"values\": []}\n   ```\n\n5. **gt** (Greater Than) - Numeric comparison\n   ```json\n   {\"key\": \"threshold\", \"op\": \"gt\", \"values\": [\"80\"]}\n   ```\n\n6. **lt** (Less Than) - Numeric comparison\n   ```json\n   {\"key\": \"threshold\", \"op\": \"lt\", \"values\": [\"20\"]}\n   ```\n\n7. **gte** (Greater Than or Equal) - Numeric comparison\n   ```json\n   {\"key\": \"priority\", \"op\": \"gte\", \"values\": [\"5\"]}\n   ```\n\n8. **lte** (Less Than or Equal) - Numeric comparison\n   ```json\n   {\"key\": \"priority\", \"op\": \"lte\", \"values\": [\"3\"]}\n   ```\n\n**Multiple Filters:**\nYou can combine multiple tag filters - they are applied with AND logic.\n\n**Example Use Cases:**\n- Filter CPU metrics by specific cores\n- Get network metrics for specific interfaces\n- Find metrics with error tags\n- Query metrics above/below thresholds"
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test('Response has data object', function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.data).to.exist;",
+									"});",
+									"",
+									"pm.test('Tag filters applied correctly', function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.query.tag_filters).to.exist;",
 									"});"
 								],
 								"type": "text/javascript"

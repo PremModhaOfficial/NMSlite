@@ -60,7 +60,6 @@ func (h *DiscoveryHandler) List(w http.ResponseWriter, r *http.Request) {
 func (h *DiscoveryHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		Name                 string          `json:"name"`
-		TargetType           string          `json:"target_type"`
 		TargetValue          string          `json:"target_value"`
 		Ports                json.RawMessage `json:"ports"`
 		PortScanTimeoutMs    int32           `json:"port_scan_timeout_ms"`
@@ -73,8 +72,8 @@ func (h *DiscoveryHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if input.Name == "" || input.TargetType == "" || input.TargetValue == "" {
-		sendError(w, r, http.StatusBadRequest, "VALIDATION_ERROR", "Name, TargetType, and TargetValue are required", nil)
+	if input.Name == "" || input.TargetValue == "" {
+		sendError(w, r, http.StatusBadRequest, "VALIDATION_ERROR", "Name and TargetValue are required", nil)
 		return
 	}
 
@@ -87,7 +86,6 @@ func (h *DiscoveryHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	params := db_gen.CreateDiscoveryProfileParams{
 		Name:                 input.Name,
-		TargetType:           input.TargetType,
 		TargetValue:          encryptedTarget,
 		Ports:                input.Ports,
 		PortScanTimeoutMs:    pgtype.Int4{Int32: input.PortScanTimeoutMs, Valid: input.PortScanTimeoutMs > 0},
@@ -145,7 +143,6 @@ func (h *DiscoveryHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	var input struct {
 		Name                 string          `json:"name"`
-		TargetType           string          `json:"target_type"`
 		TargetValue          string          `json:"target_value"`
 		Ports                json.RawMessage `json:"ports"`
 		PortScanTimeoutMs    int32           `json:"port_scan_timeout_ms"`
@@ -167,7 +164,6 @@ func (h *DiscoveryHandler) Update(w http.ResponseWriter, r *http.Request) {
 	params := db_gen.UpdateDiscoveryProfileParams{
 		ID:                   id,
 		Name:                 input.Name,
-		TargetType:           input.TargetType,
 		TargetValue:          encryptedTarget,
 		Ports:                input.Ports,
 		PortScanTimeoutMs:    pgtype.Int4{Int32: input.PortScanTimeoutMs, Valid: input.PortScanTimeoutMs > 0},

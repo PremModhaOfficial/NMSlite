@@ -75,7 +75,7 @@ func NewRouter(cfg *config.Config, authService *auth.Service, logger *slog.Logge
 			// Monitors (Devices)
 			r.Route("/monitors", func(r chi.Router) {
 				r.Get("/", monitorHandler.List)
-				// r.Post("/", monitorHandler.Create) // Monitors are created via discovery
+				r.Post("/", monitorHandler.Create)
 				r.Get("/{id}", monitorHandler.Get)
 				r.Patch("/{id}", monitorHandler.Update)
 				r.Delete("/{id}", monitorHandler.Delete)

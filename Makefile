@@ -1,4 +1,4 @@
-.PHONY: all build run generate tidy test clean
+.PHONY: all build run debug generate tidy test clean
 
 all: build
 
@@ -8,6 +8,12 @@ build:
 
 run: build
 	@echo "Starting NMSlite server..."
+	@./bin/nmslite
+
+debug:
+	@echo "Building NMSlite server with race detection..."
+	@go build -race -v -o bin/nmslite ./cmd/server
+	@echo "Starting NMSlite server in debug mode..."
 	@./bin/nmslite
 
 generate:
@@ -20,7 +26,7 @@ tidy:
 
 test:
 	@echo "Running tests..."
-	@go test -v ./...
+	@go test -race -v ./...
 
 clean:
 	@echo "Cleaning up build artifacts..."

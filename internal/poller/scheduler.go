@@ -10,11 +10,21 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nmslite/nmslite/internal/channels"
 	"github.com/nmslite/nmslite/internal/config"
 	"github.com/nmslite/nmslite/internal/credentials"
+	"github.com/nmslite/nmslite/internal/database/db_gen"
 	"github.com/nmslite/nmslite/internal/plugins"
 )
+
+// ScheduledMonitor wraps a db_gen.Monitor pointer with runtime scheduling state.
+type ScheduledMonitor struct {
+	Monitor             *db_gen.Monitor
+	ConsecutiveFailures int
+	NextPollDeadline    time.Time
+	valid               bool // For lazy deletion
+}
 
 // PriorityQueue implements heap.Interface for *ScheduledMonitor
 type PriorityQueue []*ScheduledMonitor
@@ -30,14 +40,10 @@ func (pq PriorityQueue) Less(i, j int) bool {
 
 func (pq PriorityQueue) Swap(i, j int) {
 	pq[i], pq[j] = pq[j], pq[i]
-	pq[i].heapIndex = i
-	pq[j].heapIndex = j
 }
 
 func (pq *PriorityQueue) Push(x interface{}) {
-	n := len(*pq)
 	item := x.(*ScheduledMonitor)
-	item.heapIndex = n
 	*pq = append(*pq, item)
 }
 
@@ -45,8 +51,7 @@ func (pq *PriorityQueue) Pop() interface{} {
 	old := *pq
 	n := len(old)
 	item := old[n-1]
-	old[n-1] = nil      // avoid memory leak
-	item.heapIndex = -1 // for safety
+	old[n-1] = nil // avoid memory leak
 	*pq = old[0 : n-1]
 	return item
 }
@@ -54,8 +59,9 @@ func (pq *PriorityQueue) Pop() interface{} {
 // SchedulerImpl manages the scheduling and execution of monitor polling tasks
 type SchedulerImpl struct {
 	// Dependencies
-	cache          *MonitorCache
 	events         *channels.EventChannels
+	db             *pgxpool.Pool
+	querier        db_gen.Querier
 	pluginExecutor *plugins.Executor
 	pluginRegistry *plugins.Registry
 	credService    *credentials.Service
@@ -69,8 +75,9 @@ type SchedulerImpl struct {
 	downThreshold   int
 
 	// Priority queue
-	heap   PriorityQueue
-	heapMu sync.Mutex
+	heap     PriorityQueue
+	heapMu   sync.Mutex
+	monitors map[uuid.UUID]*ScheduledMonitor
 
 	// Semaphores for concurrency control
 	livenessSem chan struct{}
@@ -85,7 +92,7 @@ type SchedulerImpl struct {
 
 // NewSchedulerImpl creates a new SchedulerImpl instance
 func NewSchedulerImpl(
-	cache *MonitorCache,
+	db *pgxpool.Pool,
 	events *channels.EventChannels,
 	pluginExecutor *plugins.Executor,
 	pluginRegistry *plugins.Registry,
@@ -95,7 +102,8 @@ func NewSchedulerImpl(
 	cfg config.SchedulerConfig,
 ) *SchedulerImpl {
 	return &SchedulerImpl{
-		cache:           cache,
+		db:              db,
+		querier:         db_gen.New(db),
 		events:          events,
 		pluginExecutor:  pluginExecutor,
 		pluginRegistry:  pluginRegistry,
@@ -109,6 +117,7 @@ func NewSchedulerImpl(
 		livenessSem:     make(chan struct{}, cfg.LivenessWorkers),
 		pluginSem:       make(chan struct{}, cfg.PluginWorkers),
 		heap:            make(PriorityQueue, 0),
+		monitors:        make(map[uuid.UUID]*ScheduledMonitor),
 		done:            make(chan struct{}),
 	}
 }
@@ -130,8 +139,10 @@ func (s *SchedulerImpl) Run(ctx context.Context) error {
 		"down_threshold", s.downThreshold,
 	)
 
-	// Initialize heap from cache
-	s.initHeap()
+	// Load active monitors from database
+	if err := s.LoadActiveMonitors(ctx); err != nil {
+		return fmt.Errorf("failed to load monitors: %w", err)
+	}
 
 	ticker := time.NewTicker(s.tickInterval)
 	defer ticker.Stop()
@@ -152,22 +163,24 @@ func (s *SchedulerImpl) Run(ctx context.Context) error {
 	}
 }
 
-// AddMonitor adds or updates a monitor in the scheduler
-func (s *SchedulerImpl) AddMonitor(sm *ScheduledMonitor) {
+// AddMonitor adds a new monitor to the scheduler (used by discovery/API)
+// Sets NextPollDeadline to zero time so it's picked up on next tick
+func (s *SchedulerImpl) AddMonitor(monitor *db_gen.Monitor) {
 	s.heapMu.Lock()
 	defer s.heapMu.Unlock()
 
-	// If monitor already exists in heap, remove it first
-	if sm.heapIndex >= 0 && sm.heapIndex < len(s.heap) {
-		heap.Remove(&s.heap, sm.heapIndex)
+	sm := &ScheduledMonitor{
+		Monitor:          monitor,
+		NextPollDeadline: time.Time{}, // Zero time = immediate pickup
+		valid:            true,
 	}
 
-	// Add to heap
+	s.monitors[monitor.ID] = sm
 	heap.Push(&s.heap, sm)
 
-	s.logger.Debug("monitor added to scheduler",
-		"monitor_id", sm.Monitor.ID,
-		"next_poll", sm.NextPollDeadline,
+	s.logger.Info("monitor added to scheduler",
+		"monitor_id", monitor.ID,
+		"next_poll", "immediate",
 	)
 }
 
@@ -178,26 +191,38 @@ func (s *SchedulerImpl) IsRunning() bool {
 	return s.running
 }
 
-// initHeap rebuilds the priority queue from all monitors in cache
-func (s *SchedulerImpl) initHeap() {
+// LoadActiveMonitors loads all active monitors from the database at startup
+func (s *SchedulerImpl) LoadActiveMonitors(ctx context.Context) error {
+	s.logger.Info("Loading active monitors from database")
+
+	monitors, err := s.querier.ListMonitors(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to list monitors: %w", err)
+	}
+
 	s.heapMu.Lock()
 	defer s.heapMu.Unlock()
 
-	// Get all scheduled monitors from cache
-	monitors := s.cache.GetAllScheduled()
-	s.heap = make(PriorityQueue, 0, len(monitors))
-
-	for _, sm := range monitors {
-		// Initialize next poll deadline if not set
-		if sm.NextPollDeadline.IsZero() {
-			sm.NextPollDeadline = time.Now()
+	activeCount := 0
+	for _, monitor := range monitors {
+		if monitor.Status.Valid && monitor.Status.String == "active" {
+			sm := &ScheduledMonitor{
+				Monitor:          &monitor,
+				NextPollDeadline: time.Now(),
+				valid:            true,
+			}
+			s.monitors[monitor.ID] = sm
+			heap.Push(&s.heap, sm)
+			activeCount++
 		}
-		s.heap = append(s.heap, sm)
 	}
 
-	heap.Init(&s.heap)
+	s.logger.Info("Active monitors loaded",
+		"total_monitors", len(monitors),
+		"active_monitors", activeCount,
+	)
 
-	s.logger.Info("scheduler heap initialized", "monitor_count", len(s.heap))
+	return nil
 }
 
 // tick processes all monitors that are due for polling
@@ -216,6 +241,14 @@ func (s *SchedulerImpl) tick(ctx context.Context) {
 
 		// Pop from heap
 		popped := heap.Pop(&s.heap).(*ScheduledMonitor)
+
+		// Lazy deletion - skip invalid monitors
+		if !popped.valid {
+			s.logger.Debug("dropping invalid monitor from queue",
+				"monitor_id", popped.Monitor.ID)
+			continue
+		}
+
 		dueMonitors = append(dueMonitors, popped)
 
 		// Reschedule immediately (will be pushed back to heap after processing)
@@ -398,11 +431,10 @@ func (s *SchedulerImpl) executePlugin(ctx context.Context, sm *ScheduledMonitor)
 
 // handleSuccess processes a successful poll result
 func (s *SchedulerImpl) handleSuccess(sm *ScheduledMonitor, results []plugins.PollResult) {
+	s.heapMu.Lock()
 	wasDown := sm.ConsecutiveFailures >= s.downThreshold
-
-	// Reset failure count
 	sm.ConsecutiveFailures = 0
-	sm.LastPollAt = time.Now()
+	s.heapMu.Unlock()
 
 	// Write results using result writer
 	s.resultWriter.Write(sm.Monitor.ID, results)
@@ -412,9 +444,12 @@ func (s *SchedulerImpl) handleSuccess(sm *ScheduledMonitor, results []plugins.Po
 		"result_count", len(results),
 	)
 
-	// Emit recovery event if monitor was down
+	// Handle recovery if monitor was down
 	if wasDown {
-		// Send event to channel
+		// Update DB status
+		s.updateMonitorStatus(context.Background(), sm.Monitor.ID, "active")
+
+		// Emit recovery event for external consumers
 		select {
 		case s.events.MonitorRecovered <- channels.MonitorRecoveredEvent{
 			MonitorID: sm.Monitor.ID,
@@ -435,10 +470,15 @@ func (s *SchedulerImpl) handleSuccess(sm *ScheduledMonitor, results []plugins.Po
 
 // handleFailure processes a failed poll attempt
 func (s *SchedulerImpl) handleFailure(sm *ScheduledMonitor, reason string) {
-	wasUp := sm.ConsecutiveFailures < s.downThreshold
+	s.heapMu.Lock()
 
+	if !sm.valid {
+		s.heapMu.Unlock()
+		return
+	}
+
+	wasUp := sm.ConsecutiveFailures < s.downThreshold
 	sm.ConsecutiveFailures++
-	sm.LastPollAt = time.Now()
 
 	s.logger.Warn("monitor poll failed",
 		"monitor_id", sm.Monitor.ID,
@@ -446,9 +486,18 @@ func (s *SchedulerImpl) handleFailure(sm *ScheduledMonitor, reason string) {
 		"reason", reason,
 	)
 
-	// Emit down event if threshold reached
+	// Check if threshold reached
 	if wasUp && sm.ConsecutiveFailures >= s.downThreshold {
-		// Send event to channel
+		// Mark invalid for lazy deletion
+		sm.valid = false
+		delete(s.monitors, sm.Monitor.ID)
+
+		s.heapMu.Unlock()
+
+		// Update DB (outside lock)
+		s.updateMonitorStatus(context.Background(), sm.Monitor.ID, "down")
+
+		// Emit event for external consumers
 		select {
 		case s.events.MonitorDown <- channels.MonitorDownEvent{
 			MonitorID: sm.Monitor.ID,
@@ -466,6 +515,8 @@ func (s *SchedulerImpl) handleFailure(sm *ScheduledMonitor, reason string) {
 				"monitor_id", sm.Monitor.ID,
 			)
 		}
+	} else {
+		s.heapMu.Unlock()
 	}
 }
 
@@ -485,7 +536,7 @@ func (s *SchedulerImpl) rescheduleUnlocked(sm *ScheduledMonitor) {
 	}
 
 	interval := time.Duration(intervalSeconds) * time.Second
-	sm.NextPollDeadline = time.Now().Add(interval)
+	sm.NextPollDeadline = sm.NextPollDeadline.Add(interval)
 	heap.Push(&s.heap, sm)
 
 	s.logger.Debug("monitor rescheduled",
@@ -509,15 +560,28 @@ func (s *SchedulerImpl) shutdown() {
 	s.logger.Info("scheduler shutdown complete")
 }
 
-// GetAllScheduled returns all scheduled monitors from cache
-// This is a helper method that needs to be added to MonitorCache
-func (mc *MonitorCache) GetAllScheduled() []*ScheduledMonitor {
-	mc.mu.RLock()
-	defer mc.mu.RUnlock()
+// updateMonitorStatus updates the monitor's status in the database
+func (s *SchedulerImpl) updateMonitorStatus(ctx context.Context, monitorID uuid.UUID, status string) {
+	query := `
+		UPDATE monitors
+		SET status = $1, updated_at = NOW()
+		WHERE id = $2 AND deleted_at IS NULL
+	`
 
-	monitors := make([]*ScheduledMonitor, 0, len(mc.monitors))
-	for _, sm := range mc.monitors {
-		monitors = append(monitors, sm)
+	result, err := s.db.Exec(ctx, query, status, monitorID)
+	if err != nil {
+		s.logger.Error("Failed to update monitor status",
+			"monitor_id", monitorID,
+			"status", status,
+			"error", err,
+		)
+		return
 	}
-	return monitors
+
+	if result.RowsAffected() == 0 {
+		s.logger.Warn("No rows updated when setting monitor status",
+			"monitor_id", monitorID,
+			"status", status,
+		)
+	}
 }

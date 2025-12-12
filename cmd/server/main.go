@@ -51,9 +51,8 @@ func main() {
 	batchWriter := initBatchWriter(ctx, metricsPool, cfg, logger)
 
 	// Initialize and start workers
-	stateHandler := startStateHandler(ctx, events, apiPool, logger)
 	pluginRegistry, pluginExecutor, credService := startDiscoveryWorker(ctx, cfg, apiPool, events, authService, logger)
-	startScheduler(ctx, cfg, stateHandler, pluginExecutor, pluginRegistry, credService, events, batchWriter, logger)
+	startScheduler(ctx, cfg, apiPool, pluginExecutor, pluginRegistry, credService, events, batchWriter, logger)
 
 	// Start HTTP server
 	srv := initHTTPServer(cfg, authService, logger, apiPool, events)
@@ -151,21 +150,6 @@ func initBatchWriter(ctx context.Context, metricsPool *pgxpool.Pool, cfg *config
 	return batchWriter
 }
 
-func startStateHandler(ctx context.Context, events *channels.EventChannels, db *pgxpool.Pool, logger *slog.Logger) *poller.StateHandler {
-	stateHandler := poller.NewStateHandler(events, db, logger)
-	go func() {
-		if err := stateHandler.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
-			logger.Error("State handler error", "error", err)
-		}
-	}()
-
-	if err := stateHandler.LoadActiveMonitors(ctx); err != nil {
-		logger.Error("Failed to load active monitors", "error", err)
-	}
-
-	return stateHandler
-}
-
 func startDiscoveryWorker(ctx context.Context, cfg *config.Config, db *pgxpool.Pool, events *channels.EventChannels, authService *auth.Service, logger *slog.Logger) (*plugins.Registry, *plugins.Executor, *credentials.Service) {
 	// Initialize Plugin Registry
 	pluginRegistry := plugins.NewRegistry(cfg.Plugins.Directory, logger)
@@ -216,7 +200,7 @@ func startDiscoveryWorker(ctx context.Context, cfg *config.Config, db *pgxpool.P
 func startScheduler(
 	ctx context.Context,
 	cfg *config.Config,
-	stateHandler *poller.StateHandler,
+	db *pgxpool.Pool,
 	pluginExecutor *plugins.Executor,
 	pluginRegistry *plugins.Registry,
 	credService *credentials.Service,
@@ -227,7 +211,7 @@ func startScheduler(
 	resultWriter := poller.NewResultWriter(logger, batchWriter)
 
 	scheduler := poller.NewSchedulerImpl(
-		stateHandler.GetCache(),
+		db,
 		events,
 		pluginExecutor,
 		pluginRegistry,
@@ -237,8 +221,10 @@ func startScheduler(
 		cfg.Scheduler,
 	)
 
-	// Set back-reference for cache → scheduler sync
-	stateHandler.GetCache().SetScheduler(scheduler)
+	// Load active monitors at startup
+	if err := scheduler.LoadActiveMonitors(ctx); err != nil {
+		logger.Error("Failed to load active monitors", "error", err)
+	}
 
 	go func() {
 		if err := scheduler.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {

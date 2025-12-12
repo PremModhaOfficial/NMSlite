@@ -133,7 +133,7 @@ func (w *Worker) handleDiscoveryStartedEvent(ctx context.Context, event channels
 
 	logger.InfoContext(ctx, "Starting discovery run (plugin-based)",
 		slog.String("profile_name", profile.Name),
-		slog.String("target_type", profile.TargetType),
+		slog.String("target_value", profile.TargetValue),
 	)
 
 	// Execute discovery
@@ -201,6 +201,18 @@ func (w *Worker) executeDiscovery(
 		)
 	}
 
+	// Expand target into individual IPs (handles CIDR, ranges, and single IPs)
+	targetIPs, err := ExpandTarget(decryptedTarget)
+	if err != nil {
+		return 0, fmt.Errorf("failed to expand target value: %w", err)
+	}
+
+	logger.InfoContext(ctx, "Target expanded to IPs",
+		slog.String("target", decryptedTarget),
+		slog.Int("ip_count", len(targetIPs)),
+		slog.String("target_type", string(DetectTargetType(decryptedTarget))),
+	)
+
 	// Get port scan timeout, default to 1 second if not set
 	timeout := time.Duration(1000) * time.Millisecond
 	if profile.PortScanTimeoutMs.Valid && profile.PortScanTimeoutMs.Int32 > 0 {
@@ -209,130 +221,138 @@ func (w *Worker) executeDiscovery(
 
 	monitorsCreated := 0
 
-	// 2. For each port
-	for _, port := range ports {
+	// 2. For each IP address in the expanded target
+	for _, targetIP := range targetIPs {
 		// Check context cancellation
 		if err := ctx.Err(); err != nil {
 			return monitorsCreated, fmt.Errorf("discovery cancelled: %w", err)
 		}
 
-		// 2a. TCP liveness check
-		if !w.isPortOpen(ctx, decryptedTarget, port, timeout, logger) {
-			logger.DebugContext(ctx, "Port closed or unreachable",
-				slog.String("ip", decryptedTarget),
-				slog.Int("port", port),
-			)
-			continue
-		}
+		// 2a. For each port
+		for _, port := range ports {
+			// Check context cancellation
+			if err := ctx.Err(); err != nil {
+				return monitorsCreated, fmt.Errorf("discovery cancelled: %w", err)
+			}
 
-		logger.InfoContext(ctx, "Port open, saving to discovered_devices",
-			slog.String("ip", decryptedTarget),
-			slog.Int("port", port),
-		)
-
-		// 2b. Save to discovered_devices table
-		ipAddr, err := netip.ParseAddr(decryptedTarget)
-		if err != nil {
-			logger.ErrorContext(ctx, "Failed to parse IP address",
-				slog.String("ip", decryptedTarget),
-				slog.String("error", err.Error()),
-			)
-			continue
-		}
-
-		discoveredDevice, err := w.querier.CreateDiscoveredDevice(ctx, db_gen.CreateDiscoveredDeviceParams{
-			DiscoveryProfileID: uuid.NullUUID{UUID: profile.ID, Valid: true},
-			IpAddress:          ipAddr,
-			Hostname:           pgtype.Text{Valid: false}, // null initially
-			Port:               int32(port),
-			Status:             pgtype.Text{String: "new", Valid: true},
-		})
-
-		if err != nil {
-			logger.ErrorContext(ctx, "Failed to save discovered device",
-				slog.String("ip", decryptedTarget),
-				slog.Int("port", port),
-				slog.String("error", err.Error()),
-			)
-			continue
-		}
-
-		// 2c. If auto_provision is enabled, create monitor
-		if profile.AutoProvision.Valid && profile.AutoProvision.Bool {
-			logger.InfoContext(ctx, "Auto-provision enabled, creating monitor",
-				slog.String("ip", decryptedTarget),
-				slog.Int("port", port),
-			)
-
-			// Find plugins that handle this port
-			matchingPlugins := w.registry.GetByPort(port)
-			if len(matchingPlugins) == 0 {
-				logger.InfoContext(ctx, "No plugin found for port, skipping auto-provision",
+			// 2b. TCP liveness check
+			if !w.isPortOpen(ctx, targetIP, port, timeout, logger) {
+				logger.DebugContext(ctx, "Port closed or unreachable",
+					slog.String("ip", targetIP),
 					slog.Int("port", port),
 				)
 				continue
 			}
 
-			// Take first plugin
-			plugin := matchingPlugins[0]
-
-			// Take first credential
-			credID, err := uuid.Parse(credentialIDs[0])
-			if err != nil {
-				logger.WarnContext(ctx, "Invalid credential ID",
-					slog.String("credential_id", credentialIDs[0]),
-					slog.String("error", err.Error()),
-				)
-				continue
-			}
-
-			// Create monitor
-			ipAddr, err := netip.ParseAddr(decryptedTarget)
-			if err != nil {
-				logger.ErrorContext(ctx, "Failed to parse IP address for monitor",
-					slog.String("ip", decryptedTarget),
-					slog.String("error", err.Error()),
-				)
-				continue
-			}
-
-			_, err = w.querier.CreateMonitor(ctx, db_gen.CreateMonitorParams{
-				DisplayName:         pgtype.Text{Valid: false}, // Will be populated during polling
-				Hostname:            pgtype.Text{Valid: false}, // Will be populated during polling
-				IpAddress:           ipAddr,
-				PluginID:            plugin.Manifest.ID,
-				CredentialProfileID: uuid.NullUUID{UUID: credID, Valid: true},
-				DiscoveryProfileID:  uuid.NullUUID{UUID: profile.ID, Valid: true},
-				Port:                pgtype.Int4{Int32: int32(port), Valid: true},
-			})
-
-			if err != nil {
-				logger.ErrorContext(ctx, "Failed to create monitor",
-					slog.String("plugin", plugin.Manifest.ID),
-					slog.String("error", err.Error()),
-				)
-				continue
-			}
-
-			// Update discovered_device status to "provisioned"
-			err = w.querier.UpdateDiscoveredDeviceStatus(ctx, db_gen.UpdateDiscoveredDeviceStatusParams{
-				ID:     discoveredDevice.ID,
-				Status: pgtype.Text{String: "provisioned", Valid: true},
-			})
-
-			if err != nil {
-				logger.WarnContext(ctx, "Failed to update discovered device status",
-					slog.String("device_id", discoveredDevice.ID.String()),
-					slog.String("error", err.Error()),
-				)
-			}
-
-			monitorsCreated++
-			logger.InfoContext(ctx, "Monitor auto-created for device",
-				slog.String("ip", decryptedTarget),
+			logger.InfoContext(ctx, "Port open, saving to discovered_devices",
+				slog.String("ip", targetIP),
 				slog.Int("port", port),
-				slog.String("plugin", plugin.Manifest.ID),
 			)
+
+			// 2c. Save to discovered_devices table
+			ipAddr, err := netip.ParseAddr(targetIP)
+			if err != nil {
+				logger.ErrorContext(ctx, "Failed to parse IP address",
+					slog.String("ip", targetIP),
+					slog.String("error", err.Error()),
+				)
+				continue
+			}
+
+			discoveredDevice, err := w.querier.CreateDiscoveredDevice(ctx, db_gen.CreateDiscoveredDeviceParams{
+				DiscoveryProfileID: uuid.NullUUID{UUID: profile.ID, Valid: true},
+				IpAddress:          ipAddr,
+				Hostname:           pgtype.Text{Valid: false}, // null initially
+				Port:               int32(port),
+				Status:             pgtype.Text{String: "new", Valid: true},
+			})
+
+			if err != nil {
+				logger.ErrorContext(ctx, "Failed to save discovered device",
+					slog.String("ip", targetIP),
+					slog.Int("port", port),
+					slog.String("error", err.Error()),
+				)
+				continue
+			}
+
+			// 2d. If auto_provision is enabled, create monitor
+			if profile.AutoProvision.Valid && profile.AutoProvision.Bool {
+				logger.InfoContext(ctx, "Auto-provision enabled, creating monitor",
+					slog.String("ip", targetIP),
+					slog.Int("port", port),
+				)
+
+				// Find plugins that handle this port
+				matchingPlugins := w.registry.GetByPort(port)
+				if len(matchingPlugins) == 0 {
+					logger.InfoContext(ctx, "No plugin found for port, skipping auto-provision",
+						slog.Int("port", port),
+					)
+					continue
+				}
+
+				// Take first plugin
+				plugin := matchingPlugins[0]
+
+				// Take first credential
+				credID, err := uuid.Parse(credentialIDs[0])
+				if err != nil {
+					logger.WarnContext(ctx, "Invalid credential ID",
+						slog.String("credential_id", credentialIDs[0]),
+						slog.String("error", err.Error()),
+					)
+					continue
+				}
+
+				// Create monitor
+				ipAddr, err := netip.ParseAddr(targetIP)
+				if err != nil {
+					logger.ErrorContext(ctx, "Failed to parse IP address for monitor",
+						slog.String("ip", targetIP),
+						slog.String("error", err.Error()),
+					)
+					continue
+				}
+
+				_, err = w.querier.CreateMonitor(ctx, db_gen.CreateMonitorParams{
+					DisplayName:         pgtype.Text{Valid: false}, // Will be populated during polling
+					Hostname:            pgtype.Text{Valid: false}, // Will be populated during polling
+					IpAddress:           ipAddr,
+					PluginID:            plugin.Manifest.ID,
+					CredentialProfileID: uuid.NullUUID{UUID: credID, Valid: true},
+					DiscoveryProfileID:  uuid.NullUUID{UUID: profile.ID, Valid: true},
+					Port:                pgtype.Int4{Int32: int32(port), Valid: true},
+				})
+
+				if err != nil {
+					logger.ErrorContext(ctx, "Failed to create monitor",
+						slog.String("plugin", plugin.Manifest.ID),
+						slog.String("error", err.Error()),
+					)
+					continue
+				}
+
+				// Update discovered_device status to "provisioned"
+				err = w.querier.UpdateDiscoveredDeviceStatus(ctx, db_gen.UpdateDiscoveredDeviceStatusParams{
+					ID:     discoveredDevice.ID,
+					Status: pgtype.Text{String: "provisioned", Valid: true},
+				})
+
+				if err != nil {
+					logger.WarnContext(ctx, "Failed to update discovered device status",
+						slog.String("device_id", discoveredDevice.ID.String()),
+						slog.String("error", err.Error()),
+					)
+				}
+
+				monitorsCreated++
+				logger.InfoContext(ctx, "Monitor auto-created for device",
+					slog.String("ip", targetIP),
+					slog.Int("port", port),
+					slog.String("plugin", plugin.Manifest.ID),
+				)
+			}
 		}
 	}
 
