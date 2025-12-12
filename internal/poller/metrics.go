@@ -11,17 +11,10 @@ import (
 type Metric struct {
 	Timestamp   time.Time         `json:"timestamp"`
 	MetricGroup string            `json:"metric_group"`
-	DeviceID    string            `json:"device_id"`
+	DeviceID    uuid.UUID         `json:"device_id"`
 	Tags        map[string]string `json:"tags"`
 	ValUsed     *float64          `json:"val_used,omitempty"`
 	ValTotal    *float64          `json:"val_total,omitempty"`
-}
-
-// MetricBatch represents a batch of metrics for a monitor
-type MetricBatch struct {
-	MonitorID uuid.UUID `json:"monitor_id"`
-	Timestamp time.Time `json:"timestamp"`
-	Metrics   []Metric  `json:"metrics"`
 }
 
 // ParseMetricsFromPlugin converts plugin output to typed metrics
@@ -77,8 +70,12 @@ func parseMetricFromMap(data map[string]interface{}, defaultTimestamp time.Time)
 	}
 
 	// Parse device_id (required)
-	if deviceID, ok := data["device_id"].(string); ok {
-		metric.DeviceID = deviceID
+	if deviceIDStr, ok := data["device_id"].(string); ok {
+		parsedID, err := uuid.Parse(deviceIDStr)
+		if err != nil {
+			return metric, fmt.Errorf("invalid device_id format: %w", err)
+		}
+		metric.DeviceID = parsedID
 	} else {
 		return metric, fmt.Errorf("missing or invalid 'device_id' field")
 	}

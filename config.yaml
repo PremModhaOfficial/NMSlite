@@ -12,9 +12,9 @@ server:
 
 # TLS Configuration (Required for production)
 tls:
-  enabled: false
-  cert_file: "/etc/nms/certs/server.crt"
-  key_file: "/etc/nms/certs/server.key"
+  enabled: true
+  cert_file: "./certs/server.crt"
+  key_file: "./certs/server.key"
 
 # CORS Configuration
 cors:
@@ -88,7 +88,7 @@ discovery:
 
 # Plugin Configuration
 plugins:
-  directory: "./plugin_bins"
+  directory: "./plugin_bins/"
   scan_interval_seconds: 60
 
 # Event Bus Configuration

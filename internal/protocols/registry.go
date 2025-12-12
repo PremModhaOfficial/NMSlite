@@ -31,14 +31,14 @@ var (
 // GetRegistry returns the singleton Protocol Registry
 func GetRegistry() *Registry {
 	registryOnce.Do(func() {
-		globalRegistry = NewRegistry()
+		globalRegistry = newRegistry()
 		globalRegistry.initializeProtocols()
 	})
 	return globalRegistry
 }
 
-// NewRegistry creates a new protocol registry
-func NewRegistry() *Registry {
+// newRegistry creates a new protocol registry
+func newRegistry() *Registry {
 	return &Registry{
 		protocols:       make(map[string]*Protocol),
 		credentialTypes: make(map[string]reflect.Type),

@@ -16,14 +16,14 @@ import (
 	"github.com/nmslite/nmslite/internal/auth"
 	"github.com/nmslite/nmslite/internal/channels"
 	"github.com/nmslite/nmslite/internal/credentials"
-	"github.com/nmslite/nmslite/internal/database/db_gen"
+	"github.com/nmslite/nmslite/internal/database/dbgen"
 	"github.com/nmslite/nmslite/internal/plugins"
 )
 
 // Worker processes discovery events asynchronously.
 type Worker struct {
 	events      *channels.EventChannels
-	querier     db_gen.Querier
+	querier     dbgen.Querier
 	registry    plugins.PluginRegistry
 	executor    *plugins.Executor
 	credentials *credentials.Service
@@ -39,7 +39,7 @@ type Worker struct {
 // NewWorker creates a new discovery worker instance with plugin support.
 func NewWorker(
 	events *channels.EventChannels,
-	querier db_gen.Querier,
+	querier dbgen.Querier,
 	registry plugins.PluginRegistry,
 	executor *plugins.Executor,
 	credentials *credentials.Service,
@@ -72,9 +72,9 @@ func (w *Worker) Run(ctx context.Context) error {
 			)
 			return ctx.Err()
 
-		case event, ok := <-w.events.DiscoveryStarted:
+		case event, ok := <-w.events.DiscoveryRequest:
 			if !ok {
-				w.logger.WarnContext(ctx, "DiscoveryStarted channel closed, exiting worker")
+				w.logger.WarnContext(ctx, "DiscoveryRequest channel closed, exiting worker")
 				return fmt.Errorf("discovery started channel closed")
 			}
 
@@ -85,7 +85,7 @@ func (w *Worker) Run(ctx context.Context) error {
 }
 
 // handleDiscoveryStartedEvent processes a single discovery start event.
-func (w *Worker) handleDiscoveryStartedEvent(ctx context.Context, event channels.DiscoveryStartedEvent) {
+func (w *Worker) handleDiscoveryStartedEvent(ctx context.Context, event channels.DiscoveryRequestEvent) {
 	logger := w.logger.With(
 		slog.String("profile_id", event.ProfileID.String()),
 		slog.String("started_at", event.StartedAt.Format(time.RFC3339)),
@@ -147,7 +147,7 @@ func (w *Worker) handleDiscoveryStartedEvent(ctx context.Context, event channels
 	}
 
 	// Update discovery profile status in database
-	updateErr := w.querier.UpdateDiscoveryProfileStatus(ctx, db_gen.UpdateDiscoveryProfileStatusParams{
+	updateErr := w.querier.UpdateDiscoveryProfileStatus(ctx, dbgen.UpdateDiscoveryProfileStatusParams{
 		ID:                profile.ID,
 		LastRunStatus:     pgtype.Text{String: status, Valid: true},
 		DevicesDiscovered: pgtype.Int4{Int32: int32(monitorCount), Valid: true},
@@ -170,7 +170,7 @@ func (w *Worker) handleDiscoveryStartedEvent(ctx context.Context, event channels
 // executeDiscovery runs discovery with protocol-specific handshake validation
 func (w *Worker) executeDiscovery(
 	ctx context.Context,
-	profile db_gen.DiscoveryProfile,
+	profile dbgen.DiscoveryProfile,
 	logger *slog.Logger,
 ) (int, error) {
 	// 1. Parse ports and credential IDs
@@ -277,13 +277,13 @@ func (w *Worker) executeDiscovery(
 
 					switch plugin.Manifest.Protocol {
 					case "ssh":
-						result, _ = ValidateSSH(ctx, targetIP, port, creds, handshakeTimeout)
+						result, _ = ValidateSSH(targetIP, port, creds, handshakeTimeout)
 					case "winrm":
-						result, _ = ValidateWinRM(ctx, targetIP, port, creds, handshakeTimeout)
+						result, _ = ValidateWinRM(targetIP, port, creds, handshakeTimeout)
 					case "snmp-v2c":
-						result, _ = ValidateSNMPv2c(ctx, targetIP, port, creds, handshakeTimeout)
+						result, _ = ValidateSNMPv2c(targetIP, port, creds, handshakeTimeout)
 					case "snmp-v3":
-						result, _ = ValidateSNMPv3(ctx, targetIP, port, creds, handshakeTimeout)
+						result, _ = ValidateSNMPv3(targetIP, port, creds, handshakeTimeout)
 					default:
 						logger.WarnContext(ctx, "Unknown protocol, skipping handshake",
 							slog.String("protocol", plugin.Manifest.Protocol),
@@ -342,7 +342,7 @@ func (w *Worker) executeDiscovery(
 // publishCompletedEvent publishes a discovery completion event to the event bus.
 func (w *Worker) publishCompletedEvent(
 	ctx context.Context,
-	event channels.DiscoveryStartedEvent,
+	event channels.DiscoveryRequestEvent,
 	statusStr string,
 	deviceCount int,
 	_ string, // error message (reserved for future use)

@@ -2,6 +2,7 @@ package protocols
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 )
 
@@ -23,6 +24,7 @@ func TestRegistryInitialization(t *testing.T) {
 		"winrm":    false,
 		"ssh":      false,
 		"snmp-v2c": false,
+		"snmp-v3":  false,
 	}
 
 	for _, p := range protocols {
@@ -257,7 +259,8 @@ func TestValidationErrorFormat(t *testing.T) {
 	}
 
 	// Check if error is a ValidationErrors type
-	validationErrs, ok := err.(*ValidationErrors)
+	var validationErrs *ValidationErrors
+	ok := errors.As(err, &validationErrs)
 	if !ok {
 		t.Fatalf("Expected *ValidationErrors, got %T", err)
 	}

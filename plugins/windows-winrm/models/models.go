@@ -32,15 +32,9 @@ type Metric struct {
 	ValTotal    *float64          `json:"val_total"` // Pointer allows JSON null for metrics without limits
 }
 
-// Helper function to create a pointer to a float64 value
+// Float64Ptr Float64Ptr Helper function to create a pointer to a float64 value
 func Float64Ptr(v float64) *float64 {
 	return &v
 }
 
 // Float64PtrOrNil returns nil if value is 0, otherwise returns pointer to value
-func Float64PtrOrNil(v float64) *float64 {
-	if v == 0 {
-		return nil
-	}
-	return &v
-}

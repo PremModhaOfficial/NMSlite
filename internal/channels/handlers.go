@@ -7,7 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
-	db_gen "github.com/nmslite/nmslite/internal/database/db_gen"
+	"github.com/nmslite/nmslite/internal/database/dbgen"
 )
 
 // StartDiscoveryCompletionLogger starts a goroutine that logs discovery completion events.
@@ -36,7 +36,7 @@ func StartDiscoveryCompletionLogger(ctx context.Context, events *EventChannels, 
 }
 
 // StartProvisionHandler listens for DeviceValidatedEvent and creates discovered devices and monitors
-func StartProvisionHandler(ctx context.Context, events *EventChannels, querier db_gen.Querier, logger *slog.Logger) {
+func StartProvisionHandler(ctx context.Context, events *EventChannels, querier dbgen.Querier, logger *slog.Logger) {
 	go func() {
 		for {
 			select {
@@ -52,7 +52,7 @@ func StartProvisionHandler(ctx context.Context, events *EventChannels, querier d
 				)
 
 				// 1. Create discovered_devices entry
-				_, err := querier.CreateDiscoveredDevice(ctx, db_gen.CreateDiscoveredDeviceParams{
+				_, err := querier.CreateDiscoveredDevice(ctx, dbgen.CreateDiscoveredDeviceParams{
 					DiscoveryProfileID: uuid.NullUUID{UUID: event.DiscoveryProfile.ID, Valid: true},
 					IpAddress:          netip.MustParseAddr(event.IP),
 					Port:               int32(event.Port),
@@ -73,7 +73,7 @@ func StartProvisionHandler(ctx context.Context, events *EventChannels, querier d
 						slog.Int("port", event.Port),
 					)
 
-					_, err := querier.CreateMonitor(ctx, db_gen.CreateMonitorParams{
+					_, err := querier.CreateMonitor(ctx, dbgen.CreateMonitorParams{
 						IpAddress:           netip.MustParseAddr(event.IP),
 						Port:                pgtype.Int4{Int32: int32(event.Port), Valid: true},
 						PluginID:            event.Plugin.Manifest.ID,

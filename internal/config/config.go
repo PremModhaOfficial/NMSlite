@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"slices"
@@ -58,14 +59,13 @@ type PoolConfig struct {
 }
 
 type DatabaseConfig struct {
-	Host        string     `yaml:"host"`
-	Port        int        `yaml:"port"`
-	User        string     `yaml:"user"`
-	Password    string     `yaml:"password"`
-	DBName      string     `yaml:"dbname"`
-	SSLMode     string     `yaml:"ssl_mode"`
-	APIPool     PoolConfig `yaml:"api_pool"`
-	MetricsPool PoolConfig `yaml:"metrics_pool"`
+	Host     string     `yaml:"host"`
+	Port     int        `yaml:"port"`
+	User     string     `yaml:"user"`
+	Password string     `yaml:"password"`
+	DBName   string     `yaml:"dbname"`
+	SSLMode  string     `yaml:"ssl_mode"`
+	Pool     PoolConfig `yaml:"pool"`
 }
 
 type AuthConfig struct {
@@ -265,41 +265,22 @@ func (d *DatabaseConfig) GetConnString() string {
 }
 
 // ApplyDefaults sets default values for pool configuration
-func (p *PoolConfig) ApplyDefaults(isAPI bool) {
-	if isAPI {
-		// API pool defaults - lower connections, shorter lifetimes
-		if p.MaxConns == 0 {
-			p.MaxConns = 25
-		}
-		if p.MinConns == 0 {
-			p.MinConns = 5
-		}
-		if p.MaxConnLifetimeMinutes == 0 {
-			p.MaxConnLifetimeMinutes = 60
-		}
-		if p.MaxConnIdleTimeMinutes == 0 {
-			p.MaxConnIdleTimeMinutes = 10
-		}
-		if p.HealthCheckPeriodSeconds == 0 {
-			p.HealthCheckPeriodSeconds = 30
-		}
-	} else {
-		// Metrics pool defaults - higher connections, longer lifetimes
-		if p.MaxConns == 0 {
-			p.MaxConns = 50
-		}
-		if p.MinConns == 0 {
-			p.MinConns = 10
-		}
-		if p.MaxConnLifetimeMinutes == 0 {
-			p.MaxConnLifetimeMinutes = 120
-		}
-		if p.MaxConnIdleTimeMinutes == 0 {
-			p.MaxConnIdleTimeMinutes = 30
-		}
-		if p.HealthCheckPeriodSeconds == 0 {
-			p.HealthCheckPeriodSeconds = 60
-		}
+func (p *PoolConfig) ApplyDefaults() {
+	// Unified pool defaults - balanced for all operations
+	if p.MaxConns == 0 {
+		p.MaxConns = 50
+	}
+	if p.MinConns == 0 {
+		p.MinConns = 10
+	}
+	if p.MaxConnLifetimeMinutes == 0 {
+		p.MaxConnLifetimeMinutes = 90
+	}
+	if p.MaxConnIdleTimeMinutes == 0 {
+		p.MaxConnIdleTimeMinutes = 20
+	}
+	if p.HealthCheckPeriodSeconds == 0 {
+		p.HealthCheckPeriodSeconds = 45
 	}
 }
 
@@ -342,4 +323,166 @@ func (s *SchedulerConfig) GetLivenessTimeout() time.Duration {
 // GetPluginTimeout returns the plugin timeout as a duration
 func (s *SchedulerConfig) GetPluginTimeout() time.Duration {
 	return time.Duration(s.PluginTimeoutMS) * time.Millisecond
+}
+
+// DumpExampleConfig writes an example configuration to the provided writer
+func DumpExampleConfig(w io.Writer) error {
+	example := &Config{
+		Server: ServerConfig{
+			Host:           "0.0.0.0",
+			Port:           8080,
+			ReadTimeoutMS:  30000,
+			WriteTimeoutMS: 30000,
+		},
+		TLS: TLSConfig{
+			Enabled:  false,
+			CertFile: "./certs/server.crt",
+			KeyFile:  "./certs/server.key",
+		},
+		CORS: CORSConfig{
+			Enabled:        true,
+			AllowedOrigins: []string{"http://localhost:3000", "https://yourdomain.com"},
+			AllowedMethods: []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+			AllowedHeaders: []string{"Authorization", "Content-Type"},
+			MaxAgeSeconds:  3600,
+		},
+		Database: DatabaseConfig{
+			Host:     "localhost",
+			Port:     5432,
+			User:     "nmslite",
+			Password: "changeme",
+			DBName:   "nmslite",
+			SSLMode:  "disable",
+			Pool: PoolConfig{
+				MaxConns:                 50,
+				MinConns:                 10,
+				MaxConnLifetimeMinutes:   90,
+				MaxConnIdleTimeMinutes:   20,
+				HealthCheckPeriodSeconds: 45,
+			},
+		},
+		Auth: AuthConfig{
+			AdminUsername:  "admin",
+			AdminPassword:  "changeme",
+			JWTSecret:      "your-secret-key-minimum-32-chars-required",
+			JWTExpiryHours: 24,
+			EncryptionKey:  "32-character-encryption-key!",
+		},
+		Poller: PollerConfig{
+			WorkerPoolSize:       50,
+			LivenessPoolSize:     500,
+			LivenessTimeoutMS:    2000,
+			LivenessBatchSize:    50,
+			BatchFlushIntervalMS: 100,
+			PluginTimeoutMS:      60000,
+			DownThreshold:        3,
+		},
+		Scheduler: SchedulerConfig{
+			TickIntervalMS:    10000,
+			LivenessWorkers:   100,
+			PluginWorkers:     50,
+			LivenessTimeoutMS: 2000,
+			PluginTimeoutMS:   60000,
+			DownThreshold:     3,
+		},
+		Metrics: MetricsConfig{
+			BatchSize:             100,
+			FlushIntervalMS:       10,
+			RetentionDays:         90,
+			CompressionAfterHours: 1,
+			MaxBufferSize:         10000,
+			MaxMetricAgeMinutes:   5,
+		},
+		Discovery: DiscoveryConfig{
+			MaxDiscoveryWorkers:  100,
+			DefaultPortTimeoutMS: 1000,
+			HandshakeTimeoutMS:   5000,
+		},
+		Plugins: PluginsConfig{
+			Directory:           "./plugin_bins/",
+			ScanIntervalSeconds: 60,
+		},
+		Channel: EventBusConfig{
+			PollJobsChannelSize:        100,
+			MetricResultsChannelSize:   100,
+			CacheEventsChannelSize:     50,
+			StateSignalChannelSize:     50,
+			DiscoveryEventsChannelSize: 50,
+			DeviceValidatedChannelSize: 100,
+		},
+		Logging: LoggingConfig{
+			Level:    "info",
+			Format:   "json",
+			Output:   "stdout",
+			FilePath: "/var/log/nms/nms.log",
+		},
+	}
+
+	// Create a YAML node for custom formatting with comments
+	var node yaml.Node
+	if err := node.Encode(example); err != nil {
+		return fmt.Errorf("failed to encode config: %w", err)
+	}
+
+	// Write header comment
+	header := `# =============================================================================
+# NMS Lite Example Configuration
+# =============================================================================
+# This is an example configuration file for NMS Lite.
+# Copy this file to config.yaml and modify it according to your needs.
+#
+# Environment variable overrides follow the pattern: NMS_<SECTION>_<KEY>
+# Example: NMS_DATABASE_HOST, NMS_AUTH_JWT_SECRET
+# =============================================================================
+
+`
+	if _, err := fmt.Fprint(w, header); err != nil {
+		return fmt.Errorf("failed to write header: %w", err)
+	}
+
+	// Encode to YAML
+	encoder := yaml.NewEncoder(w)
+	encoder.SetIndent(2)
+	if err := encoder.Encode(&node); err != nil {
+		return fmt.Errorf("failed to encode YAML: %w", err)
+	}
+
+	if err := encoder.Close(); err != nil {
+		return fmt.Errorf("failed to close encoder: %w", err)
+	}
+
+	// Write footer comment
+	footer := `
+# =============================================================================
+# Important Notes:
+# =============================================================================
+# 
+# 1. Security:
+#    - Change all default passwords before deploying to production
+#    - Set NMS_AUTH_JWT_SECRET to a strong random string (min 32 chars)
+#    - Set NMS_AUTH_ENCRYPTION_KEY to exactly 32 random characters
+#    - Enable TLS in production environments
+#
+# 2. Database:
+#    - Ensure PostgreSQL is running and accessible
+#    - Create the database before starting the application
+#    - Configure connection pools based on your workload
+#
+# 3. Performance:
+#    - Adjust worker pool sizes based on your hardware
+#    - Configure tick intervals based on monitoring frequency needs
+#    - Tune batch sizes for optimal database write performance
+#
+# 4. Plugins:
+#    - Place plugin binaries in the configured plugins directory
+#    - Ensure plugins are executable and have correct permissions
+#
+# For more information, visit: https://github.com/nmslite/nmslite
+# =============================================================================
+`
+	if _, err := fmt.Fprint(w, footer); err != nil {
+		return fmt.Errorf("failed to write footer: %w", err)
+	}
+
+	return nil
 }

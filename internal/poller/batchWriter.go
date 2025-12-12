@@ -3,6 +3,7 @@ package poller
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -12,7 +13,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nmslite/nmslite/internal/config"
-	"github.com/nmslite/nmslite/internal/models"
 )
 
 // MetricRecord represents a metric ready for database insertion
@@ -41,39 +41,12 @@ type BatchWriter struct {
 	batchMu      sync.Mutex
 	lastFlush    time.Time
 
-	// Statistics and failure tracking
-	stats               BatchStats
-	statsMu             sync.RWMutex
+	// Failure tracking
 	consecutiveFailures int
 	maxConsecutiveFails int
 
 	// Lifecycle management
-	wg       sync.WaitGroup
-	stopOnce sync.Once
-}
-
-// BatchStats provides observability metrics
-type BatchStats struct {
-	TotalSubmitted      int64
-	TotalWritten        int64
-	TotalFailed         int64
-	TotalRequeued       int64
-	BatchesWritten      int64
-	BatchesFailed       int64
-	CurrentBatchSize    int
-	CurrentBufferSize   int
-	LastFlushTime       time.Time
-	LastWriteDuration   time.Duration
-	ConsecutiveFailures int
-}
-
-// BatchWriterConfig holds configuration for the batch writer
-type BatchWriterConfig struct {
-	BatchSize           int
-	FlushIntervalMS     int
-	MaxBufferSize       int
-	MaxConsecutiveFails int
-	SubmitChannelSize   int
+	wg sync.WaitGroup
 }
 
 // NewBatchWriter creates a new BatchWriter instance
@@ -102,9 +75,6 @@ func NewBatchWriter(pool *pgxpool.Pool, cfg *config.MetricsConfig, logger *slog.
 		currentBatch:        make([]MetricRecord, 0, batchSize),
 		lastFlush:           time.Now(),
 		maxConsecutiveFails: maxConsecutiveFails,
-		stats: BatchStats{
-			LastFlushTime: time.Now(),
-		},
 	}
 }
 
@@ -113,9 +83,6 @@ func NewBatchWriter(pool *pgxpool.Pool, cfg *config.MetricsConfig, logger *slog.
 func (bw *BatchWriter) Submit(ctx context.Context, record MetricRecord) error {
 	select {
 	case bw.submitCh <- record:
-		bw.statsMu.Lock()
-		bw.stats.TotalSubmitted++
-		bw.statsMu.Unlock()
 		return nil
 	case <-ctx.Done():
 		return fmt.Errorf("submit cancelled: %w", ctx.Err())
@@ -185,27 +152,22 @@ func (bw *BatchWriter) flush(ctx context.Context) error {
 
 	// Swap current batch with a new one
 	batch := bw.currentBatch
-	batchSize := len(batch)
 	bw.currentBatch = make([]MetricRecord, 0, bw.cfg.BatchSize)
 	bw.batchMu.Unlock()
 
 	// Include requeued items in this flush
 	bw.bufferMu.Lock()
 	if len(bw.requeueBuffer) > 0 {
+		requeuedCount := len(bw.requeueBuffer) // Capture count before reset
 		batch = append(bw.requeueBuffer, batch...)
 		bw.requeueBuffer = make([]MetricRecord, 0, bw.cfg.BatchSize*10)
-		bw.logger.Info("including requeued items in flush", "requeued_count", len(bw.requeueBuffer))
+		bw.logger.Info("including requeued items in flush", "requeued_count", requeuedCount)
 	}
 	bw.bufferMu.Unlock()
 
 	startTime := time.Now()
 	err := bw.writeBatch(ctx, batch)
 	duration := time.Since(startTime)
-
-	bw.statsMu.Lock()
-	bw.stats.LastFlushTime = time.Now()
-	bw.stats.LastWriteDuration = duration
-	bw.statsMu.Unlock()
 
 	if err != nil {
 		bw.logger.Error("batch write failed",
@@ -216,11 +178,6 @@ func (bw *BatchWriter) flush(ctx context.Context) error {
 
 		// Track failure and requeue
 		bw.consecutiveFailures++
-		bw.statsMu.Lock()
-		bw.stats.BatchesFailed++
-		bw.stats.TotalFailed += int64(len(batch))
-		bw.stats.ConsecutiveFailures = bw.consecutiveFailures
-		bw.statsMu.Unlock()
 
 		// Requeue if we haven't exceeded max failures
 		if bw.consecutiveFailures < bw.maxConsecutiveFails {
@@ -237,13 +194,6 @@ func (bw *BatchWriter) flush(ctx context.Context) error {
 
 	// Success - reset failure counter
 	bw.consecutiveFailures = 0
-
-	bw.statsMu.Lock()
-	bw.stats.BatchesWritten++
-	bw.stats.TotalWritten += int64(len(batch))
-	bw.stats.ConsecutiveFailures = 0
-	bw.stats.CurrentBatchSize = batchSize
-	bw.statsMu.Unlock()
 
 	bw.logger.Debug("batch written successfully",
 		"batch_size", len(batch),
@@ -266,7 +216,7 @@ func (bw *BatchWriter) writeBatch(ctx context.Context, batch []MetricRecord) err
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer func() {
-		if err := tx.Rollback(ctx); err != nil && err != pgx.ErrTxClosed {
+		if err := tx.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
 			bw.logger.Warn("failed to rollback transaction", "error", err)
 		}
 	}()
@@ -345,67 +295,8 @@ func (bw *BatchWriter) requeue(batch []MetricRecord) {
 
 	bw.requeueBuffer = append(bw.requeueBuffer, toRequeue...)
 
-	bw.statsMu.Lock()
-	bw.stats.TotalRequeued += int64(len(toRequeue))
-	bw.stats.CurrentBufferSize = len(bw.requeueBuffer)
-	bw.statsMu.Unlock()
-
 	bw.logger.Info("batch requeued for retry",
 		"requeued_count", len(toRequeue),
 		"buffer_size", len(bw.requeueBuffer),
 	)
-}
-
-// GetStats returns current statistics for monitoring
-func (bw *BatchWriter) GetStats() BatchStats {
-	bw.statsMu.RLock()
-	defer bw.statsMu.RUnlock()
-
-	// Update current sizes
-	bw.batchMu.Lock()
-	bw.stats.CurrentBatchSize = len(bw.currentBatch)
-	bw.batchMu.Unlock()
-
-	bw.bufferMu.Lock()
-	bw.stats.CurrentBufferSize = len(bw.requeueBuffer)
-	bw.bufferMu.Unlock()
-
-	return bw.stats
-}
-
-// Shutdown gracefully stops the batch writer
-func (bw *BatchWriter) Shutdown(ctx context.Context) error {
-	bw.logger.Info("batch writer shutdown initiated")
-
-	bw.stopOnce.Do(func() {
-		close(bw.submitCh)
-	})
-
-	// Wait for all goroutines to finish with timeout
-	done := make(chan struct{})
-	go func() {
-		bw.wg.Wait()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		bw.logger.Info("batch writer shutdown complete")
-		return nil
-	case <-ctx.Done():
-		bw.logger.Warn("batch writer shutdown timeout", "error", ctx.Err())
-		return ctx.Err()
-	}
-}
-
-// ConvertMetricToRecord converts a models.Metric to a MetricRecord
-func ConvertMetricToRecord(metric *models.Metric) MetricRecord {
-	return MetricRecord{
-		MonitorID:   metric.DeviceID,
-		Timestamp:   metric.Timestamp,
-		MetricGroup: metric.MetricGroup,
-		Tags:        metric.Tags,
-		ValUsed:     metric.ValUsed,
-		ValTotal:    metric.ValTotal,
-	}
 }

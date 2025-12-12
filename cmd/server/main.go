@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"log"
 	"log/slog"
@@ -19,13 +20,25 @@ import (
 	"github.com/nmslite/nmslite/internal/config"
 	"github.com/nmslite/nmslite/internal/credentials"
 	"github.com/nmslite/nmslite/internal/database"
-	"github.com/nmslite/nmslite/internal/database/db_gen"
+	"github.com/nmslite/nmslite/internal/database/dbgen"
 	"github.com/nmslite/nmslite/internal/discovery"
 	"github.com/nmslite/nmslite/internal/plugins"
 	"github.com/nmslite/nmslite/internal/poller"
 )
 
 func main() {
+	// Parse command-line flags
+	dumpConfig := flag.Bool("dump-config", false, "Dump example configuration to stdout and exit")
+	flag.Parse()
+
+	// Handle dump-config flag
+	if *dumpConfig {
+		if err := config.DumpExampleConfig(os.Stdout); err != nil {
+			log.Fatalf("Failed to dump example config: %v", err)
+		}
+		os.Exit(0)
+	}
+
 	// Load configuration and logger
 	cfg := loadConfig()
 	logger := initLogger(cfg.Logging)
@@ -39,25 +52,25 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Initialize database with dual pools
-	apiPool, metricsPool := initDatabase(ctx, cfg, logger)
+	// Initialize database with single pool
+	pool := initDatabase(ctx, cfg, logger)
 	defer database.Close()
 
-	authService := initAuthService(cfg, logger)
+	authService := initAuthService(cfg)
 	events := initEventChannels(ctx, cfg, logger)
 	defer events.Close()
 
 	// Initialize BatchWriter for metrics
-	batchWriter := initBatchWriter(ctx, metricsPool, cfg, logger)
+	batchWriter := initBatchWriter(ctx, pool, cfg, logger)
 
 	// Initialize and start workers
-	pluginRegistry, pluginExecutor, credService := startDiscoveryWorker(ctx, cfg, apiPool, events, authService, logger)
-	startScheduler(ctx, cfg, apiPool, pluginExecutor, pluginRegistry, credService, events, batchWriter, logger)
-	channels.StartProvisionHandler(ctx, events, db_gen.New(apiPool), logger)
+	pluginRegistry, pluginExecutor, credService := startDiscoveryWorker(ctx, cfg, pool, events, authService, logger)
+	startScheduler(ctx, cfg, pool, pluginExecutor, pluginRegistry, credService, events, batchWriter, logger)
+	channels.StartProvisionHandler(ctx, events, dbgen.New(pool), logger)
 
 	// Start HTTP server
-	srv := initHTTPServer(cfg, authService, logger, apiPool, events)
-	go startServer(srv, logger)
+	srv := initHTTPServer(cfg, authService, logger, pool, events)
+	go startServer(srv, logger, cfg)
 
 	// Wait for shutdown signal
 	quit := make(chan os.Signal, 1)
@@ -65,7 +78,7 @@ func main() {
 	<-quit
 
 	// Graceful shutdown
-	shutdownServer(ctx, cancel, srv, logger)
+	shutdownServer(cancel, srv, logger)
 }
 
 func loadConfig() *config.Config {
@@ -76,7 +89,7 @@ func loadConfig() *config.Config {
 	return cfg
 }
 
-func initDatabase(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*pgxpool.Pool, *pgxpool.Pool) {
+func initDatabase(ctx context.Context, cfg *config.Config, logger *slog.Logger) *pgxpool.Pool {
 	if err := database.InitDB(ctx, cfg); err != nil {
 		log.Fatalf("DB init failed: %v", err)
 	}
@@ -85,18 +98,16 @@ func initDatabase(ctx context.Context, cfg *config.Config, logger *slog.Logger) 
 		log.Fatalf("Migrations failed: %v", err)
 	}
 
-	apiPool := database.GetAPIPool()
-	metricsPool := database.GetMetricsPool()
+	pool := database.GetPool()
 
-	logger.Info("Database pools initialized",
-		"api_pool_max_conns", cfg.Database.APIPool.MaxConns,
-		"metrics_pool_max_conns", cfg.Database.MetricsPool.MaxConns,
+	logger.Info("Database pool initialized",
+		"max_conns", cfg.Database.Pool.MaxConns,
 	)
 
-	return apiPool, metricsPool
+	return pool
 }
 
-func initAuthService(cfg *config.Config, logger *slog.Logger) *auth.Service {
+func initAuthService(cfg *config.Config) *auth.Service {
 	authService, err := auth.NewService(
 		cfg.Auth.JWTSecret,
 		cfg.Auth.EncryptionKey,
@@ -133,8 +144,8 @@ func initEventChannels(ctx context.Context, cfg *config.Config, logger *slog.Log
 	return events
 }
 
-func initBatchWriter(ctx context.Context, metricsPool *pgxpool.Pool, cfg *config.Config, logger *slog.Logger) *poller.BatchWriter {
-	batchWriter := poller.NewBatchWriter(metricsPool, &cfg.Metrics, logger)
+func initBatchWriter(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config, logger *slog.Logger) *poller.BatchWriter {
+	batchWriter := poller.NewBatchWriter(pool, &cfg.Metrics, logger)
 
 	go func() {
 		if err := batchWriter.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
@@ -177,10 +188,10 @@ func startDiscoveryWorker(ctx context.Context, cfg *config.Config, db *pgxpool.P
 	)
 
 	// Initialize services
-	credentialService := credentials.NewService(authService, db_gen.New(db))
+	credentialService := credentials.NewService(authService, dbgen.New(db))
 	discoveryWorker := discovery.NewWorker(
 		events,
-		db_gen.New(db),
+		dbgen.New(db),
 		pluginRegistry,
 		pluginExecutor,
 		credentialService,
@@ -212,7 +223,7 @@ func startScheduler(
 	resultWriter := poller.NewResultWriter(logger, batchWriter)
 
 	scheduler := poller.NewSchedulerImpl(
-		db,
+		dbgen.New(db), // Wrap pool with sqlc querier - pool is still shared
 		events,
 		pluginExecutor,
 		pluginRegistry,
@@ -221,11 +232,6 @@ func startScheduler(
 		logger,
 		cfg.Scheduler,
 	)
-
-	// Load active monitors at startup
-	if err := scheduler.LoadActiveMonitors(ctx); err != nil {
-		logger.Error("Failed to load active monitors", "error", err)
-	}
 
 	go func() {
 		if err := scheduler.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
@@ -250,15 +256,23 @@ func initHTTPServer(cfg *config.Config, authService *auth.Service, logger *slog.
 	}
 }
 
-func startServer(srv *http.Server, logger *slog.Logger) {
-	logger.Info("HTTP server listening", "addr", srv.Addr)
-	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		logger.Error("Server failed", "error", err)
-		os.Exit(1)
+func startServer(srv *http.Server, logger *slog.Logger, cfg *config.Config) {
+	if cfg.TLS.Enabled {
+		logger.Info("HTTPS server listening", "addr", srv.Addr)
+		if err := srv.ListenAndServeTLS(cfg.TLS.CertFile, cfg.TLS.KeyFile); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("HTTPS server failed", "error", err)
+			os.Exit(1)
+		}
+	} else {
+		logger.Info("HTTP server listening", "addr", srv.Addr)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("HTTP server failed", "error", err)
+			os.Exit(1)
+		}
 	}
 }
 
-func shutdownServer(ctx context.Context, cancel context.CancelFunc, srv *http.Server, logger *slog.Logger) {
+func shutdownServer(cancel context.CancelFunc, srv *http.Server, logger *slog.Logger) {
 	logger.Info("Shutting down server...")
 	cancel()
 

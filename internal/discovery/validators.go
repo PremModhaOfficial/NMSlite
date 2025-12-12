@@ -1,7 +1,6 @@
 package discovery
 
 import (
-	"context"
 	"fmt"
 	"time"
 
@@ -21,7 +20,7 @@ type HandshakeResult struct {
 
 // ValidateSSH attempts SSH handshake with password or key auth
 // Uses golang.org/x/crypto/ssh
-func ValidateSSH(ctx context.Context, target string, port int, creds *plugins.Credentials, timeout time.Duration) (*HandshakeResult, error) {
+func ValidateSSH(target string, port int, creds *plugins.Credentials, timeout time.Duration) (*HandshakeResult, error) {
 	address := fmt.Sprintf("%s:%d", target, port)
 
 	// Build auth methods
@@ -90,7 +89,7 @@ func ValidateSSH(ctx context.Context, target string, port int, creds *plugins.Cr
 
 // ValidateWinRM attempts WinRM handshake (NTLM or Basic)
 // Uses github.com/masterzen/winrm
-func ValidateWinRM(ctx context.Context, target string, port int, creds *plugins.Credentials, timeout time.Duration) (*HandshakeResult, error) {
+func ValidateWinRM(target string, port int, creds *plugins.Credentials, timeout time.Duration) (*HandshakeResult, error) {
 	endpoint := winrm.NewEndpoint(target, port, false, false, nil, nil, nil, timeout)
 
 	client, err := winrm.NewClient(endpoint, creds.Username, creds.Password)
@@ -124,7 +123,7 @@ func ValidateWinRM(ctx context.Context, target string, port int, creds *plugins.
 
 // ValidateSNMPv2c attempts SNMP v2c handshake with community string
 // Uses github.com/gosnmp/gosnmp - UDP GetRequest to sysDescr OID
-func ValidateSNMPv2c(ctx context.Context, target string, port int, creds *plugins.Credentials, timeout time.Duration) (*HandshakeResult, error) {
+func ValidateSNMPv2c(target string, port int, creds *plugins.Credentials, timeout time.Duration) (*HandshakeResult, error) {
 	g := &gosnmp.GoSNMP{
 		Target:    target,
 		Port:      uint16(port),
@@ -171,7 +170,7 @@ func ValidateSNMPv2c(ctx context.Context, target string, port int, creds *plugin
 
 // ValidateSNMPv3 attempts SNMP v3 handshake with USM auth
 // Uses github.com/gosnmp/gosnmp - supports noAuthNoPriv, authNoPriv, authPriv
-func ValidateSNMPv3(ctx context.Context, target string, port int, creds *plugins.Credentials, timeout time.Duration) (*HandshakeResult, error) {
+func ValidateSNMPv3(target string, port int, creds *plugins.Credentials, timeout time.Duration) (*HandshakeResult, error) {
 	g := &gosnmp.GoSNMP{
 		Target:  target,
 		Port:    uint16(port),
@@ -246,6 +245,7 @@ func ValidateSNMPv3(ctx context.Context, target string, port int, creds *plugins
 			AuthenticationProtocol:   authProto,
 			AuthenticationPassphrase: creds.AuthPassword,
 		}
+		//goland:noinspection GoDfaConstantCondition
 	case gosnmp.AuthPriv:
 		g.SecurityModel = gosnmp.UserSecurityModel
 		g.MsgFlags = securityLevel

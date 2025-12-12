@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os/exec"
@@ -60,7 +61,7 @@ func (e *Executor) Poll(ctx context.Context, pluginID string, tasks []PollTask) 
 	err = cmd.Run()
 
 	// Check for timeout
-	if execCtx.Err() == context.DeadlineExceeded {
+	if errors.Is(execCtx.Err(), context.DeadlineExceeded) {
 		return nil, fmt.Errorf("plugin execution timed out after %v", e.timeout)
 	}
 

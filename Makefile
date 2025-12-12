@@ -50,7 +50,3 @@ build-plugin-winrm:
 .PHONY: build-plugins
 build-plugins: build-plugin-winrm
 
-# Clean plugin binaries
-.PHONY: clean-plugins
-clean-plugins:
-	rm -rf plugin_bins/

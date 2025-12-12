@@ -270,7 +270,7 @@ func (b *MetricsQueryBuilder) Build() (string, []interface{}, error) {
 	return query, args, nil
 }
 
-// ExecuteQuery executes the metrics query and returns the results
+// ExecuteMetricsQuery executes the metrics query and returns batch results grouped by device and returns the results
 func ExecuteMetricsQuery(ctx context.Context, pool *pgxpool.Pool, deviceIDs []uuid.UUID, req MetricsQueryRequest) (*BatchMetricsQueryResponse, error) {
 	builder := NewMetricsQueryBuilder(deviceIDs, req)
 	query, args, err := builder.Build()

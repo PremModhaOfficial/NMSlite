@@ -13,13 +13,13 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nmslite/nmslite/internal/auth"
 	"github.com/nmslite/nmslite/internal/channels"
-	"github.com/nmslite/nmslite/internal/database/db_gen"
+	"github.com/nmslite/nmslite/internal/database/dbgen"
 )
 
 // DiscoveryHandler handles discovery profile endpoints
 type DiscoveryHandler struct {
 	pool        *pgxpool.Pool
-	q           db_gen.Querier
+	q           dbgen.Querier
 	authService *auth.Service
 	events      *channels.EventChannels
 }
@@ -28,7 +28,7 @@ type DiscoveryHandler struct {
 func NewDiscoveryHandler(pool *pgxpool.Pool, authService *auth.Service, events *channels.EventChannels) *DiscoveryHandler {
 	return &DiscoveryHandler{
 		pool:        pool,
-		q:           db_gen.New(pool),
+		q:           dbgen.New(pool),
 		authService: authService,
 		events:      events,
 	}
@@ -84,7 +84,7 @@ func (h *DiscoveryHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	params := db_gen.CreateDiscoveryProfileParams{
+	params := dbgen.CreateDiscoveryProfileParams{
 		Name:                 input.Name,
 		TargetValue:          encryptedTarget,
 		Ports:                input.Ports,
@@ -161,7 +161,7 @@ func (h *DiscoveryHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	params := db_gen.UpdateDiscoveryProfileParams{
+	params := dbgen.UpdateDiscoveryProfileParams{
 		ID:                   id,
 		Name:                 input.Name,
 		TargetValue:          encryptedTarget,
@@ -222,14 +222,14 @@ func (h *DiscoveryHandler) Run(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 2. Publish discovery started event to typed channel
-	startedEvent := channels.DiscoveryStartedEvent{
+	startedEvent := channels.DiscoveryRequestEvent{
 		ProfileID: id,
 		StartedAt: time.Now(),
 	}
 
 	// Non-blocking send with context
 	select {
-	case h.events.DiscoveryStarted <- startedEvent:
+	case h.events.DiscoveryRequest <- startedEvent:
 		// Event sent successfully
 	case <-r.Context().Done():
 		sendError(w, r, http.StatusInternalServerError, "EVENT_PUBLISH_ERROR", "Context cancelled while publishing event", r.Context().Err())

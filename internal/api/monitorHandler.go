@@ -4,28 +4,33 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/nmslite/nmslite/internal/channels"
 	"github.com/nmslite/nmslite/internal/database"
-	"github.com/nmslite/nmslite/internal/database/db_gen"
+	"github.com/nmslite/nmslite/internal/database/dbgen"
 )
 
 // MonitorHandler handles monitor (device) endpoints
 type MonitorHandler struct {
-	pool *pgxpool.Pool
-	q    db_gen.Querier
+	pool   *pgxpool.Pool
+	q      dbgen.Querier
+	events *channels.EventChannels
 }
 
 // NewMonitorHandler creates a new monitor handler
-func NewMonitorHandler(pool *pgxpool.Pool) *MonitorHandler {
+func NewMonitorHandler(pool *pgxpool.Pool, events *channels.EventChannels) *MonitorHandler {
 	return &MonitorHandler{
-		pool: pool,
-		q:    db_gen.New(pool),
+		pool:   pool,
+		q:      dbgen.New(pool),
+		events: events,
 	}
 }
 
@@ -111,7 +116,7 @@ func (h *MonitorHandler) Create(w http.ResponseWriter, r *http.Request) {
 		hostname = input.IPAddress
 	}
 
-	params := db_gen.CreateMonitorParams{
+	params := dbgen.CreateMonitorParams{
 		DisplayName:         pgtype.Text{String: displayName, Valid: true},
 		Hostname:            pgtype.Text{String: hostname, Valid: true},
 		IpAddress:           ipAddr,
@@ -201,11 +206,11 @@ func (h *MonitorHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Prepare params with defaults from existing
-	params := db_gen.UpdateMonitorParams{
+	params := dbgen.UpdateMonitorParams{
 		ID:                     id,
 		DisplayName:            existing.DisplayName,
 		Hostname:               existing.Hostname,
-		IpAddress:              existing.IpAddress, // Note: db_gen uses IpAddress (capital I)
+		IpAddress:              existing.IpAddress, // Note: dbgen uses IpAddress (capital I)
 		PluginID:               existing.PluginID,
 		CredentialProfileID:    existing.CredentialProfileID,
 		PollingIntervalSeconds: existing.PollingIntervalSeconds,
@@ -252,6 +257,17 @@ func (h *MonitorHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Invalidate cache
+	select {
+	case h.events.CacheInvalidate <- channels.CacheInvalidateEvent{
+		EntityType: "monitor",
+		EntityID:   id,
+		Timestamp:  time.Now(),
+	}:
+	default:
+		slog.Warn("Failed to emit cache invalidation event", "entity_type", "monitor", "id", id)
+	}
+
 	sendJSON(w, http.StatusOK, monitor)
 }
 
@@ -268,6 +284,17 @@ func (h *MonitorHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		sendError(w, r, http.StatusInternalServerError, "DB_ERROR", "Failed to delete monitor", err)
 		return
+	}
+
+	// Invalidate cache
+	select {
+	case h.events.CacheInvalidate <- channels.CacheInvalidateEvent{
+		EntityType: "monitor",
+		EntityID:   id,
+		Timestamp:  time.Now(),
+	}:
+	default:
+		slog.Warn("Failed to emit cache invalidation event", "entity_type", "monitor", "id", id)
 	}
 
 	sendJSON(w, http.StatusNoContent, nil)
@@ -329,25 +356,5 @@ func (h *MonitorHandler) QueryMetrics(w http.ResponseWriter, r *http.Request) {
 // validateMonitorIDs validates monitor IDs exist in a single DB query
 // Returns only the IDs that exist and are not soft-deleted
 func (h *MonitorHandler) validateMonitorIDs(ctx context.Context, ids []uuid.UUID) ([]uuid.UUID, error) {
-	query := `SELECT id FROM monitors WHERE id = ANY($1) AND deleted_at IS NULL`
-	rows, err := h.pool.Query(ctx, query, ids)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	validIDs := make([]uuid.UUID, 0, len(ids))
-	for rows.Next() {
-		var id uuid.UUID
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		validIDs = append(validIDs, id)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return validIDs, nil
+	return h.q.GetExistingMonitorIDs(ctx, ids)
 }

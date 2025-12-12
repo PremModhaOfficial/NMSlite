@@ -7,12 +7,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/nmslite/nmslite/internal/database/db_gen"
+	"github.com/nmslite/nmslite/internal/database/dbgen"
 	"github.com/nmslite/nmslite/internal/plugins"
 )
 
-// DiscoveryStartedEvent is published when a discovery begins execution
-type DiscoveryStartedEvent struct {
+// DiscoveryRequestEvent is published when a discovery begins execution
+type DiscoveryRequestEvent struct {
 	ProfileID uuid.UUID
 	StartedAt time.Time
 }
@@ -28,41 +28,29 @@ type DiscoveryCompletedEvent struct {
 
 // DeviceValidatedEvent - published when protocol handshake succeeds
 type DeviceValidatedEvent struct {
-	DiscoveryProfile  db_gen.DiscoveryProfile
-	CredentialProfile db_gen.CredentialProfile
+	DiscoveryProfile  dbgen.DiscoveryProfile
+	CredentialProfile dbgen.CredentialProfile
 	Plugin            *plugins.PluginInfo
 	IP                string
 	Port              int
 }
 
-// MonitorDownEvent is published when a monitor fails health checks
-type MonitorDownEvent struct {
+// MonitorStateEvent is published when a monitor state changes
+type MonitorStateEvent struct {
 	MonitorID uuid.UUID
 	IP        string
-	Failures  int
+	EventType string // "down", "recovered"
+	Failures  int    // only used when EventType == "down"
 	Timestamp time.Time
 }
 
-// MonitorRecoveredEvent is published when a down monitor recovers
-type MonitorRecoveredEvent struct {
-	MonitorID uuid.UUID
-	IP        string
-	Timestamp time.Time
-}
-
-// PluginTimeoutEvent is published when a plugin execution times out
-type PluginTimeoutEvent struct {
+// PluginEvent is published when a plugin execution encounters issues
+type PluginEvent struct {
 	PluginID  string
 	MonitorID uuid.UUID
-	Timeout   time.Duration
-	Timestamp time.Time
-}
-
-// PluginErrorEvent is published when a plugin execution fails
-type PluginErrorEvent struct {
-	PluginID  string
-	MonitorID uuid.UUID
-	Error     string
+	EventType string        // "timeout", "error"
+	Error     string        // only used when EventType == "error"
+	Timeout   time.Duration // only used when EventType == "timeout"
 	Timestamp time.Time
 }
 
@@ -76,38 +64,32 @@ type CacheInvalidateEvent struct {
 // EventChannels provides typed channels for all system events
 type EventChannels struct {
 	// Discovery events
-	DiscoveryStarted   chan DiscoveryStartedEvent
+	DiscoveryRequest   chan DiscoveryRequestEvent
 	DiscoveryCompleted chan DiscoveryCompletedEvent
 	DeviceValidated    chan DeviceValidatedEvent
 
 	// Monitor state events
-	MonitorDown      chan MonitorDownEvent
-	MonitorRecovered chan MonitorRecoveredEvent
+	MonitorState chan MonitorStateEvent
 
 	// Plugin events
-	PluginTimeout chan PluginTimeoutEvent
-	PluginError   chan PluginErrorEvent
+	PluginEvent chan PluginEvent
 
 	// Cache events
 	CacheInvalidate chan CacheInvalidateEvent
 
-	// Context for graceful shutdown
-	ctx  context.Context
+	// Graceful shutdown
 	done chan struct{}
 }
 
 // NewEventChannels creates a new EventChannels hub with configured buffer sizes
 func NewEventChannels(ctx context.Context, cfg EventChannelsConfig) *EventChannels {
 	return &EventChannels{
-		DiscoveryStarted:   make(chan DiscoveryStartedEvent, cfg.DiscoveryBufferSize),
+		DiscoveryRequest:   make(chan DiscoveryRequestEvent, cfg.DiscoveryBufferSize),
 		DiscoveryCompleted: make(chan DiscoveryCompletedEvent, cfg.DiscoveryBufferSize),
 		DeviceValidated:    make(chan DeviceValidatedEvent, cfg.DiscoveryBufferSize),
-		MonitorDown:        make(chan MonitorDownEvent, cfg.MonitorStateBufferSize),
-		MonitorRecovered:   make(chan MonitorRecoveredEvent, cfg.MonitorStateBufferSize),
-		PluginTimeout:      make(chan PluginTimeoutEvent, cfg.PluginBufferSize),
-		PluginError:        make(chan PluginErrorEvent, cfg.PluginBufferSize),
+		MonitorState:       make(chan MonitorStateEvent, cfg.MonitorStateBufferSize),
+		PluginEvent:        make(chan PluginEvent, cfg.PluginBufferSize),
 		CacheInvalidate:    make(chan CacheInvalidateEvent, cfg.CacheBufferSize),
-		ctx:                ctx,
 		done:               make(chan struct{}),
 	}
 }
@@ -117,13 +99,11 @@ func (ec *EventChannels) Close() error {
 	close(ec.done)
 
 	// Close all channels to signal consumers to exit
-	close(ec.DiscoveryStarted)
+	close(ec.DiscoveryRequest)
 	close(ec.DiscoveryCompleted)
 	close(ec.DeviceValidated)
-	close(ec.MonitorDown)
-	close(ec.MonitorRecovered)
-	close(ec.PluginTimeout)
-	close(ec.PluginError)
+	close(ec.MonitorState)
+	close(ec.PluginEvent)
 	close(ec.CacheInvalidate)
 
 	return nil
@@ -132,9 +112,4 @@ func (ec *EventChannels) Close() error {
 // Done returns a channel that's closed when the EventChannels is shutting down
 func (ec *EventChannels) Done() <-chan struct{} {
 	return ec.done
-}
-
-// Context returns the context associated with this EventChannels
-func (ec *EventChannels) Context() context.Context {
-	return ec.ctx
 }

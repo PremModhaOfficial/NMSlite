@@ -1,6 +1,5 @@
 // Package database provides PostgreSQL connection pooling using pgx/v5.
-// It maintains separate connection pools for API operations and metrics writes
-// to prevent metrics from blocking API queries under high load.
+// It maintains a single connection pool for all database operations.
 package database
 
 import (
@@ -17,13 +16,10 @@ import (
 )
 
 var (
-	// apiPool handles all API queries and transactional operations
-	apiPool *pgxpool.Pool
+	// pool handles all database operations
+	pool *pgxpool.Pool
 
-	// metricsPool handles high-volume metric writes
-	metricsPool *pgxpool.Pool
-
-	// initOnce ensures pools are initialized only once
+	// initOnce ensures the pool is initialized only once
 	initOnce sync.Once
 
 	// initErr stores any initialization error
@@ -33,77 +29,39 @@ var (
 	closeMu sync.Mutex
 )
 
-// GetAPIPool returns the connection pool for API operations.
+// GetPool returns the connection pool for database operations.
 // Returns nil if InitDB has not been called successfully.
-func GetAPIPool() *pgxpool.Pool {
-	return apiPool
+func GetPool() *pgxpool.Pool {
+	return pool
 }
 
-// GetMetricsPool returns the connection pool for metrics operations.
-// Returns nil if InitDB has not been called successfully.
-func GetMetricsPool() *pgxpool.Pool {
-	return metricsPool
-}
-
-// InitDB initializes both API and metrics connection pools.
-// This function is safe to call multiple times - only the first call will initialize the pools.
+// InitDB initializes the database connection pool.
+// This function is safe to call multiple times - only the first call will initialize the pool.
 //
-// The API pool is configured for:
-//   - General CRUD operations
-//   - Transactional queries
-//   - Lower concurrency (MaxConns = MaxOpenConns from config)
-//
-// The metrics pool is configured for:
-//   - High-volume metric inserts
-//   - Batch writes
-//   - Higher concurrency (MaxConns = MaxOpenConns * 2)
-//   - Shorter connection lifetime
+// The pool is configured for:
+//   - All database operations (API, metrics, etc.)
+//   - Optimized for mixed workloads
 func InitDB(ctx context.Context, cfg *config.Config) error {
 	initOnce.Do(func() {
-		// Create base pool config
-		apiPoolConfig, err := createPoolConfig(ctx, cfg, false)
+		// Create pool config
+		poolConfig, err := createPoolConfig(cfg)
 		if err != nil {
-			initErr = fmt.Errorf("failed to create API pool config: %w", err)
+			initErr = fmt.Errorf("failed to create pool config: %w", err)
 			return
 		}
 
-		metricsPoolConfig, err := createPoolConfig(ctx, cfg, true)
+		// Initialize pool
+		pool, err = pgxpool.NewWithConfig(ctx, poolConfig)
 		if err != nil {
-			initErr = fmt.Errorf("failed to create metrics pool config: %w", err)
+			initErr = fmt.Errorf("failed to create pool: %w", err)
 			return
 		}
 
-		// Initialize API pool
-		apiPool, err = pgxpool.NewWithConfig(ctx, apiPoolConfig)
-		if err != nil {
-			initErr = fmt.Errorf("failed to create API pool: %w", err)
-			return
-		}
-
-		// Verify API pool connectivity
-		if err = apiPool.Ping(ctx); err != nil {
-			apiPool.Close()
-			apiPool = nil
-			initErr = fmt.Errorf("failed to ping API pool: %w", err)
-			return
-		}
-
-		// Initialize metrics pool
-		metricsPool, err = pgxpool.NewWithConfig(ctx, metricsPoolConfig)
-		if err != nil {
-			apiPool.Close()
-			apiPool = nil
-			initErr = fmt.Errorf("failed to create metrics pool: %w", err)
-			return
-		}
-
-		// Verify metrics pool connectivity
-		if err = metricsPool.Ping(ctx); err != nil {
-			apiPool.Close()
-			metricsPool.Close()
-			apiPool = nil
-			metricsPool = nil
-			initErr = fmt.Errorf("failed to ping metrics pool: %w", err)
+		// Verify pool connectivity
+		if err = pool.Ping(ctx); err != nil {
+			pool.Close()
+			pool = nil
+			initErr = fmt.Errorf("failed to ping pool: %w", err)
 			return
 		}
 
@@ -114,8 +72,7 @@ func InitDB(ctx context.Context, cfg *config.Config) error {
 }
 
 // createPoolConfig creates a pgxpool configuration based on the database config.
-// If isMetrics is true, the pool is optimized for high-volume writes.
-func createPoolConfig(ctx context.Context, cfg *config.Config, isMetrics bool) (*pgxpool.Config, error) {
+func createPoolConfig(cfg *config.Config) (*pgxpool.Config, error) {
 	// Build connection string
 	connString := fmt.Sprintf(
 		"postgres://%s:%s@%s:%d/%s?sslmode=%s",
@@ -133,22 +90,12 @@ func createPoolConfig(ctx context.Context, cfg *config.Config, isMetrics bool) (
 		return nil, fmt.Errorf("failed to parse connection string: %w", err)
 	}
 
-	// Configure connection pool
-	if isMetrics {
-		// Metrics pool: optimized for high-volume writes
-		poolConfig.MaxConns = int32(cfg.Database.MetricsPool.MaxConns)
-		poolConfig.MinConns = int32(cfg.Database.MetricsPool.MinConns)
-		poolConfig.MaxConnLifetime = time.Duration(cfg.Database.MetricsPool.MaxConnLifetimeMinutes) * time.Minute
-		poolConfig.MaxConnIdleTime = time.Duration(cfg.Database.MetricsPool.MaxConnIdleTimeMinutes) * time.Minute
-		poolConfig.HealthCheckPeriod = time.Duration(cfg.Database.MetricsPool.HealthCheckPeriodSeconds) * time.Second
-	} else {
-		// API pool: balanced for general operations
-		poolConfig.MaxConns = int32(cfg.Database.APIPool.MaxConns)
-		poolConfig.MinConns = int32(cfg.Database.APIPool.MinConns)
-		poolConfig.MaxConnLifetime = time.Duration(cfg.Database.APIPool.MaxConnLifetimeMinutes) * time.Minute
-		poolConfig.MaxConnIdleTime = time.Duration(cfg.Database.APIPool.MaxConnIdleTimeMinutes) * time.Minute
-		poolConfig.HealthCheckPeriod = time.Duration(cfg.Database.APIPool.HealthCheckPeriodSeconds) * time.Second
-	}
+	// Configure connection pool with unified settings
+	poolConfig.MaxConns = int32(cfg.Database.Pool.MaxConns)
+	poolConfig.MinConns = int32(cfg.Database.Pool.MinConns)
+	poolConfig.MaxConnLifetime = time.Duration(cfg.Database.Pool.MaxConnLifetimeMinutes) * time.Minute
+	poolConfig.MaxConnIdleTime = time.Duration(cfg.Database.Pool.MaxConnIdleTimeMinutes) * time.Minute
+	poolConfig.HealthCheckPeriod = time.Duration(cfg.Database.Pool.HealthCheckPeriodSeconds) * time.Second
 
 	// Set connection timeout
 	poolConfig.ConnConfig.ConnectTimeout = 10 * time.Second
@@ -206,36 +153,18 @@ func RunMigrations(ctx context.Context, cfg *config.Config) error {
 	return nil
 }
 
-// Close gracefully closes both connection pools.
+// Close gracefully closes the connection pool.
 // This function is safe to call multiple times and from multiple goroutines.
 // It waits for all active connections to be returned to the pool before closing.
 func Close() {
 	closeMu.Lock()
 	defer closeMu.Unlock()
 
-	if apiPool != nil {
-		apiPool.Close()
-		apiPool = nil
-	}
-
-	if metricsPool != nil {
-		metricsPool.Close()
-		metricsPool = nil
+	if pool != nil {
+		pool.Close()
+		pool = nil
 	}
 }
 
 // Stats returns statistics for both connection pools.
 // Useful for monitoring and debugging connection pool health.
-func Stats() (apiStats, metricsStats *pgxpool.Stat) {
-	if apiPool != nil {
-		stats := apiPool.Stat()
-		apiStats = stats
-	}
-
-	if metricsPool != nil {
-		stats := metricsPool.Stat()
-		metricsStats = stats
-	}
-
-	return apiStats, metricsStats
-}

@@ -23,10 +23,11 @@ func NewClient(target string, port int, creds models.Credentials, timeout time.D
 	endpoint := winrm.NewEndpoint(
 		target,
 		port,
-		true, // insecure - skip certificate verification
-		nil,  // CA certificate
-		nil,  // client certificate
-		nil,  // client key
+		false, // https - use HTTP for WinRM
+		true,  // insecure - skip certificate verification
+		nil,   // CA certificate
+		nil,   // client certificate
+		nil,   // client key
 		timeout,
 	)
 

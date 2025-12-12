@@ -24,7 +24,7 @@ func NewResultWriter(logger *slog.Logger, batchWriter *BatchWriter) *ResultWrite
 }
 
 // Write processes poll results and submits metrics to BatchWriter for bulk insertion
-func (w *ResultWriter) Write(monitorID uuid.UUID, results []plugins.PollResult) {
+func (w *ResultWriter) Write(ctx context.Context, monitorID uuid.UUID, results []plugins.PollResult) {
 	timestamp := time.Now()
 
 	for _, result := range results {
@@ -77,7 +77,7 @@ func (w *ResultWriter) Write(monitorID uuid.UUID, results []plugins.PollResult) 
 			}
 
 			// Submit to BatchWriter with context
-			if err := w.batchWriter.Submit(context.Background(), record); err != nil {
+			if err := w.batchWriter.Submit(ctx, record); err != nil {
 				w.logger.Error("failed to submit metric to batch writer",
 					"monitor_id", monitorID,
 					"request_id", result.RequestID,

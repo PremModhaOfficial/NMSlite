@@ -21,10 +21,3 @@ func StringToInet(ipStr string) (netip.Addr, error) {
 }
 
 // InetToString converts netip.Addr to an IP address string
-func InetToString(addr netip.Addr) string {
-	if !addr.IsValid() {
-		return ""
-	}
-
-	return addr.String()
-}

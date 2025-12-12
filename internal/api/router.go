@@ -12,7 +12,7 @@ import (
 	"github.com/nmslite/nmslite/internal/middleware"
 )
 
-// Router creates and configures the API router
+// NewRouter NewRouter creates and configures the API router
 func NewRouter(cfg *config.Config, authService *auth.Service, logger *slog.Logger, db *pgxpool.Pool, events *channels.EventChannels) http.Handler {
 	r := chi.NewRouter()
 
@@ -34,9 +34,9 @@ func NewRouter(cfg *config.Config, authService *auth.Service, logger *slog.Logge
 	// Initialize handlers
 	healthHandler := NewHealthHandler()
 	authHandler := NewAuthHandler(authService)
-	credentialHandler := NewCredentialHandler(db, authService)
+	credentialHandler := NewCredentialHandler(db, authService, events)
 	discoveryHandler := NewDiscoveryHandler(db, authService, events)
-	monitorHandler := NewMonitorHandler(db)
+	monitorHandler := NewMonitorHandler(db, events)
 	protocolHandler := NewProtocolHandler()
 
 	// Public routes (no auth required)

@@ -7,18 +7,18 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/nmslite/nmslite/internal/auth"
-	"github.com/nmslite/nmslite/internal/database/db_gen"
+	"github.com/nmslite/nmslite/internal/database/dbgen"
 	"github.com/nmslite/nmslite/internal/plugins"
 )
 
 // Service handles credential operations
 type Service struct {
 	authService *auth.Service
-	querier     db_gen.Querier
+	querier     dbgen.Querier
 }
 
 // NewService creates a new credential service
-func NewService(authService *auth.Service, querier db_gen.Querier) *Service {
+func NewService(authService *auth.Service, querier dbgen.Querier) *Service {
 	return &Service{
 		authService: authService,
 		querier:     querier,
@@ -33,11 +33,17 @@ func (s *Service) GetDecrypted(ctx context.Context, profileID uuid.UUID) (*plugi
 		return nil, fmt.Errorf("failed to fetch credential profile: %w", err)
 	}
 
+	// Delegate to shared decryption logic
+	return s.DecryptContainer(profile.CredentialData)
+}
+
+// DecryptContainer decrypts the raw credential_data JSON blob (which contains an encrypted string)
+func (s *Service) DecryptContainer(container []byte) (*plugins.Credentials, error) {
 	// Decrypt credential_data (expecting a JSON string containing the encrypted payload)
 	var encryptedStr string
-	if err := json.Unmarshal(profile.CredentialData, &encryptedStr); err != nil {
+	if err := json.Unmarshal(container, &encryptedStr); err != nil {
 		// Fallback: try using the raw data as string (legacy/unencrypted support)
-		encryptedStr = string(profile.CredentialData)
+		encryptedStr = string(container)
 	}
 
 	decryptedData, err := s.authService.Decrypt(encryptedStr)
@@ -87,8 +93,8 @@ func (s *Service) GetDecrypted(ctx context.Context, profileID uuid.UUID) (*plugi
 	if ap, ok := credMap["auth_protocol"].(string); ok {
 		creds.AuthProtocol = ap
 	}
-	if auth, ok := credMap["auth_password"].(string); ok {
-		creds.AuthPassword = auth
+	if authPass, ok := credMap["auth_password"].(string); ok {
+		creds.AuthPassword = authPass
 	}
 	if pp, ok := credMap["priv_protocol"].(string); ok {
 		creds.PrivProtocol = pp

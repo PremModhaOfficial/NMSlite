@@ -29,6 +29,8 @@ type ReadinessResponse struct {
 }
 
 // Health handles GET /health (liveness probe)
+//
+//goland:noinspection GoUnusedParameter
 func (h *HealthHandler) Health(w http.ResponseWriter, r *http.Request) {
 	response := HealthResponse{
 		Status:    "ok",
@@ -41,6 +43,8 @@ func (h *HealthHandler) Health(w http.ResponseWriter, r *http.Request) {
 }
 
 // Ready handles GET /ready (readiness probe)
+//
+//goland:noinspection GoUnusedParameter
 func (h *HealthHandler) Ready(w http.ResponseWriter, r *http.Request) {
 	// TODO: Add actual dependency checks
 	// - Database connection

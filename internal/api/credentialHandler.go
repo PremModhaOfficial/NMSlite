@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -12,25 +14,28 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nmslite/nmslite/internal/auth"
-	"github.com/nmslite/nmslite/internal/database/db_gen"
+	"github.com/nmslite/nmslite/internal/channels"
+	"github.com/nmslite/nmslite/internal/database/dbgen"
 	"github.com/nmslite/nmslite/internal/protocols"
 )
 
 // CredentialHandler handles credential profile endpoints
 type CredentialHandler struct {
 	pool        *pgxpool.Pool
-	q           db_gen.Querier
+	q           dbgen.Querier
 	authService *auth.Service
 	registry    *protocols.Registry
+	events      *channels.EventChannels
 }
 
 // NewCredentialHandler creates a new credential handler
-func NewCredentialHandler(pool *pgxpool.Pool, authService *auth.Service) *CredentialHandler {
+func NewCredentialHandler(pool *pgxpool.Pool, authService *auth.Service, events *channels.EventChannels) *CredentialHandler {
 	return &CredentialHandler{
 		pool:        pool,
-		q:           db_gen.New(pool),
+		q:           dbgen.New(pool),
 		authService: authService,
 		registry:    protocols.GetRegistry(),
+		events:      events,
 	}
 }
 
@@ -110,7 +115,7 @@ func (h *CredentialHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// Wrap as JSON string
 	encryptedJSON := json.RawMessage(fmt.Sprintf("%q", encryptedStr))
 
-	params := db_gen.CreateCredentialProfileParams{
+	params := dbgen.CreateCredentialProfileParams{
 		Name:           input.Name,
 		Description:    pgtype.Text{String: input.Description, Valid: input.Description != ""},
 		Protocol:       input.Protocol,
@@ -208,7 +213,7 @@ func (h *CredentialHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// Wrap as JSON string
 	encryptedJSON := json.RawMessage(fmt.Sprintf("%q", encryptedStr))
 
-	params := db_gen.UpdateCredentialProfileParams{
+	params := dbgen.UpdateCredentialProfileParams{
 		ID:             id,
 		Name:           input.Name,
 		Description:    pgtype.Text{String: input.Description, Valid: input.Description != ""},
@@ -224,6 +229,17 @@ func (h *CredentialHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 		sendError(w, r, http.StatusInternalServerError, "DB_ERROR", "Failed to update credential profile", err)
 		return
+	}
+
+	// Invalidate cache
+	select {
+	case h.events.CacheInvalidate <- channels.CacheInvalidateEvent{
+		EntityType: "credential",
+		EntityID:   id,
+		Timestamp:  time.Now(),
+	}:
+	default:
+		slog.Warn("Failed to emit cache invalidation event", "entity_type", "credential", "id", id)
 	}
 
 	sendJSON(w, http.StatusOK, profile)
@@ -242,6 +258,17 @@ func (h *CredentialHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		sendError(w, r, http.StatusInternalServerError, "DB_ERROR", "Failed to delete credential profile", err)
 		return
+	}
+
+	// Invalidate cache
+	select {
+	case h.events.CacheInvalidate <- channels.CacheInvalidateEvent{
+		EntityType: "credential",
+		EntityID:   id,
+		Timestamp:  time.Now(),
+	}:
+	default:
+		slog.Warn("Failed to emit cache invalidation event", "entity_type", "credential", "id", id)
 	}
 
 	sendJSON(w, http.StatusNoContent, nil)
