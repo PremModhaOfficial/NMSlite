@@ -23,7 +23,6 @@ type MetricRecord struct {
 	Tags        map[string]interface{}
 	ValUsed     *float64
 	ValTotal    *float64
-	ExtraData   map[string]interface{}
 }
 
 // BatchWriter handles bulk metric writes using pgx COPY protocol
@@ -276,7 +275,7 @@ func (bw *BatchWriter) writeBatch(ctx context.Context, batch []MetricRecord) err
 	copyCount, err := tx.Conn().CopyFrom(
 		ctx,
 		pgx.Identifier{"metrics"},
-		[]string{"timestamp", "metric_group", "device_id", "tags", "val_used", "val_total", "extra_data"},
+		[]string{"timestamp", "metric_group", "device_id", "tags", "val_used", "val_total"},
 		pgx.CopyFromSlice(len(batch), func(i int) ([]interface{}, error) {
 			record := batch[i]
 
@@ -289,15 +288,6 @@ func (bw *BatchWriter) writeBatch(ctx context.Context, batch []MetricRecord) err
 				}
 			}
 
-			// Marshal extra_data to JSON
-			var extraDataJSON []byte
-			if record.ExtraData != nil {
-				extraDataJSON, err = json.Marshal(record.ExtraData)
-				if err != nil {
-					return nil, fmt.Errorf("failed to marshal extra_data: %w", err)
-				}
-			}
-
 			return []interface{}{
 				record.Timestamp,
 				record.MetricGroup,
@@ -305,7 +295,6 @@ func (bw *BatchWriter) writeBatch(ctx context.Context, batch []MetricRecord) err
 				tagsJSON,
 				record.ValUsed,
 				record.ValTotal,
-				extraDataJSON,
 			}, nil
 		}),
 	)
@@ -411,11 +400,6 @@ func (bw *BatchWriter) Shutdown(ctx context.Context) error {
 
 // ConvertMetricToRecord converts a models.Metric to a MetricRecord
 func ConvertMetricToRecord(metric *models.Metric) MetricRecord {
-	var extraData map[string]interface{}
-	if metric.ExtraData != nil {
-		extraData = map[string]interface{}(*metric.ExtraData)
-	}
-
 	return MetricRecord{
 		MonitorID:   metric.DeviceID,
 		Timestamp:   metric.Timestamp,
@@ -423,6 +407,5 @@ func ConvertMetricToRecord(metric *models.Metric) MetricRecord {
 		Tags:        metric.Tags,
 		ValUsed:     metric.ValUsed,
 		ValTotal:    metric.ValTotal,
-		ExtraData:   extraData,
 	}
 }

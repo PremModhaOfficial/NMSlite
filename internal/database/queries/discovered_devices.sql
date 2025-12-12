@@ -1,8 +1,8 @@
 -- name: CreateDiscoveredDevice :one
 INSERT INTO discovered_devices (
-    discovery_profile_id, ip_address, hostname, port, status
+    discovery_profile_id, ip_address, port, status
 ) VALUES (
-    $1, $2, $3, $4, $5
+    $1, $2, $3, $4
 )
 RETURNING *;
 

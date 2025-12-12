@@ -47,7 +47,6 @@ type MetricRow struct {
 	Tags        map[string]interface{} `json:"tags"`
 	ValUsed     *float64               `json:"val_used,omitempty"`
 	ValTotal    *float64               `json:"val_total,omitempty"`
-	ExtraData   map[string]interface{} `json:"extra_data,omitempty"`
 }
 
 // MetricsQueryResponse represents the response structure
@@ -174,9 +173,9 @@ func (b *MetricsQueryBuilder) Build() (string, []interface{}, error) {
 
 	// Base SELECT
 	if b.request.Latest {
-		queryParts = append(queryParts, "SELECT DISTINCT ON (device_id, metric_group) timestamp, metric_group, device_id, tags, val_used, val_total, extra_data")
+		queryParts = append(queryParts, "SELECT DISTINCT ON (device_id, metric_group) timestamp, metric_group, device_id, tags, val_used, val_total")
 	} else {
-		queryParts = append(queryParts, "SELECT timestamp, metric_group, device_id, tags, val_used, val_total, extra_data")
+		queryParts = append(queryParts, "SELECT timestamp, metric_group, device_id, tags, val_used, val_total")
 	}
 
 	queryParts = append(queryParts, "FROM metrics")
@@ -295,7 +294,6 @@ func ExecuteMetricsQuery(ctx context.Context, pool *pgxpool.Pool, deviceIDs []uu
 	for rows.Next() {
 		var row MetricRow
 		var tagsJSON []byte
-		var extraDataJSON []byte
 
 		err := rows.Scan(
 			&row.Timestamp,
@@ -304,7 +302,6 @@ func ExecuteMetricsQuery(ctx context.Context, pool *pgxpool.Pool, deviceIDs []uu
 			&tagsJSON,
 			&row.ValUsed,
 			&row.ValTotal,
-			&extraDataJSON,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan row: %w", err)
@@ -314,12 +311,6 @@ func ExecuteMetricsQuery(ctx context.Context, pool *pgxpool.Pool, deviceIDs []uu
 		if len(tagsJSON) > 0 {
 			if err := json.Unmarshal(tagsJSON, &row.Tags); err != nil {
 				return nil, fmt.Errorf("failed to unmarshal tags: %w", err)
-			}
-		}
-
-		if len(extraDataJSON) > 0 {
-			if err := json.Unmarshal(extraDataJSON, &row.ExtraData); err != nil {
-				return nil, fmt.Errorf("failed to unmarshal extra_data: %w", err)
 			}
 		}
 

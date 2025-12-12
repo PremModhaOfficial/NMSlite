@@ -74,7 +74,6 @@ func (w *ResultWriter) Write(monitorID uuid.UUID, results []plugins.PollResult) 
 				Tags:        convertTags(metric.Tags),
 				ValUsed:     metric.ValUsed,
 				ValTotal:    metric.ValTotal,
-				ExtraData:   metric.ExtraData,
 			}
 
 			// Submit to BatchWriter with context

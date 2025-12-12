@@ -1,7 +1,6 @@
 package poller
 
 import (
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -10,13 +9,12 @@ import (
 
 // Metric represents a single metric measurement matching the DB schema
 type Metric struct {
-	Timestamp   time.Time              `json:"timestamp"`
-	MetricGroup string                 `json:"metric_group"`
-	DeviceID    string                 `json:"device_id"`
-	Tags        map[string]string      `json:"tags"`
-	ValUsed     *float64               `json:"val_used,omitempty"`
-	ValTotal    *float64               `json:"val_total,omitempty"`
-	ExtraData   map[string]interface{} `json:"extra_data,omitempty"`
+	Timestamp   time.Time         `json:"timestamp"`
+	MetricGroup string            `json:"metric_group"`
+	DeviceID    string            `json:"device_id"`
+	Tags        map[string]string `json:"tags"`
+	ValUsed     *float64          `json:"val_used,omitempty"`
+	ValTotal    *float64          `json:"val_total,omitempty"`
 }
 
 // MetricBatch represents a batch of metrics for a monitor
@@ -69,7 +67,6 @@ func parseMetricFromMap(data map[string]interface{}, defaultTimestamp time.Time)
 	metric := Metric{
 		Timestamp: defaultTimestamp,
 		Tags:      make(map[string]string),
-		ExtraData: make(map[string]interface{}),
 	}
 
 	// Parse metric_group (required)
@@ -129,20 +126,6 @@ func parseMetricFromMap(data map[string]interface{}, defaultTimestamp time.Time)
 			return metric, fmt.Errorf("invalid 'val_total' value: %w", err)
 		}
 		metric.ValTotal = &val
-	}
-
-	// Parse extra_data (optional)
-	if extraData, ok := data["extra_data"].(map[string]interface{}); ok {
-		metric.ExtraData = extraData
-	} else if extraDataRaw, ok := data["extra_data"]; ok && extraDataRaw != nil {
-		// Try to marshal and unmarshal to ensure proper type
-		jsonBytes, err := json.Marshal(extraDataRaw)
-		if err != nil {
-			return metric, fmt.Errorf("invalid 'extra_data' field: %w", err)
-		}
-		if err := json.Unmarshal(jsonBytes, &metric.ExtraData); err != nil {
-			return metric, fmt.Errorf("failed to parse 'extra_data': %w", err)
-		}
 	}
 
 	return metric, nil

@@ -117,7 +117,7 @@ func ValidateWinRM(ctx context.Context, target string, port int, creds *plugins.
 		Success:  true,
 		Protocol: "winrm",
 		Metadata: map[string]interface{}{
-			"shell_id": shell.Id,
+			"shell_id": "unknown", // shell ID not exposed in current winrm API
 		},
 	}, nil
 }
@@ -141,7 +141,7 @@ func ValidateSNMPv2c(ctx context.Context, target string, port int, creds *plugin
 			Error:    fmt.Sprintf("SNMP connection failed: %v", err),
 		}, nil
 	}
-	defer g.Close()
+	defer g.Conn.Close()
 
 	// Perform a simple GetRequest to sysDescr OID (1.3.6.1.2.1.1.1.0)
 	oids := []string{"1.3.6.1.2.1.1.1.0"}
@@ -180,7 +180,7 @@ func ValidateSNMPv3(ctx context.Context, target string, port int, creds *plugins
 	}
 
 	// Parse security level
-	var securityLevel gosnmp.SnmpV3SecurityLevel
+	var securityLevel gosnmp.SnmpV3MsgFlags
 	switch creds.SecurityLevel {
 	case "noAuthNoPriv":
 		securityLevel = gosnmp.NoAuthNoPriv
@@ -234,19 +234,22 @@ func ValidateSNMPv3(ctx context.Context, target string, port int, creds *plugins
 	switch securityLevel {
 	case gosnmp.NoAuthNoPriv:
 		g.SecurityModel = gosnmp.UserSecurityModel
-		g.SecurityDetails = &gosnmp.UsmSecurityParameters{
+		g.MsgFlags = securityLevel
+		g.SecurityParameters = &gosnmp.UsmSecurityParameters{
 			UserName: creds.SecurityName,
 		}
 	case gosnmp.AuthNoPriv:
 		g.SecurityModel = gosnmp.UserSecurityModel
-		g.SecurityDetails = &gosnmp.UsmSecurityParameters{
+		g.MsgFlags = securityLevel
+		g.SecurityParameters = &gosnmp.UsmSecurityParameters{
 			UserName:                 creds.SecurityName,
 			AuthenticationProtocol:   authProto,
 			AuthenticationPassphrase: creds.AuthPassword,
 		}
 	case gosnmp.AuthPriv:
 		g.SecurityModel = gosnmp.UserSecurityModel
-		g.SecurityDetails = &gosnmp.UsmSecurityParameters{
+		g.MsgFlags = securityLevel
+		g.SecurityParameters = &gosnmp.UsmSecurityParameters{
 			UserName:                 creds.SecurityName,
 			AuthenticationProtocol:   authProto,
 			AuthenticationPassphrase: creds.AuthPassword,
@@ -263,7 +266,7 @@ func ValidateSNMPv3(ctx context.Context, target string, port int, creds *plugins
 			Error:    fmt.Sprintf("SNMP v3 connection failed: %v", err),
 		}, nil
 	}
-	defer g.Close()
+	defer g.Conn.Close()
 
 	// Perform a simple GetRequest to sysDescr OID (1.3.6.1.2.1.1.1.0)
 	oids := []string{"1.3.6.1.2.1.1.1.0"}

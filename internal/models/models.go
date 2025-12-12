@@ -57,13 +57,12 @@ type Monitor struct {
 
 // Metric represents a single metric data point
 type Metric struct {
-	Timestamp   time.Time   `db:"timestamp"`
-	MetricGroup string      `db:"metric_group"` // e.g., 'host.cpu', 'host.memory'
-	DeviceID    uuid.UUID   `db:"device_id"`
-	Tags        JSONObject  `db:"tags"` // e.g., {"core": "0"}
-	ValUsed     *float64    `db:"val_used"`
-	ValTotal    *float64    `db:"val_total"`
-	ExtraData   *JSONObject `db:"extra_data"`
+	Timestamp   time.Time  `db:"timestamp"`
+	MetricGroup string     `db:"metric_group"` // e.g., 'host.cpu', 'host.memory'
+	DeviceID    uuid.UUID  `db:"device_id"`
+	Tags        JSONObject `db:"tags"` // e.g., {"core": "0"}
+	ValUsed     *float64   `db:"val_used"`
+	ValTotal    *float64   `db:"val_total"`
 }
 
 // EncryptedData is a wrapper for encrypted JSONB data
