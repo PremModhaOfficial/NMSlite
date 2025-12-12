@@ -12,7 +12,6 @@ type WinRMCredentials struct {
 	Username string `json:"username" validate:"required,min=1"`
 	Password string `json:"password" validate:"required,min=1"`
 	Domain   string `json:"domain,omitempty"`
-	UseHTTPS bool   `json:"use_https"`
 }
 
 // SSHCredentials represents credentials for SSH access
@@ -36,6 +35,16 @@ func (s *SSHCredentials) Validate() error {
 // SNMPCredentials represents credentials for SNMP v2c access
 type SNMPCredentials struct {
 	Community string `json:"community" validate:"required,min=1"`
+}
+
+// SNMPv3Credentials represents credentials for SNMP v3 access with USM
+type SNMPv3Credentials struct {
+	SecurityName  string `json:"security_name" validate:"required,min=1"`
+	SecurityLevel string `json:"security_level" validate:"required,oneof=noAuthNoPriv authNoPriv authPriv"`
+	AuthProtocol  string `json:"auth_protocol,omitempty" validate:"omitempty,oneof=MD5 SHA SHA224 SHA256 SHA384 SHA512"`
+	AuthPassword  string `json:"auth_password,omitempty"`
+	PrivProtocol  string `json:"priv_protocol,omitempty" validate:"omitempty,oneof=DES AES AES192 AES256"`
+	PrivPassword  string `json:"priv_password,omitempty"`
 }
 
 // Global validator instance

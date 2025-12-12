@@ -2,10 +2,11 @@ package channels
 
 // EventChannelsConfig configures buffer sizes for event channels
 type EventChannelsConfig struct {
-	DiscoveryBufferSize    int
-	MonitorStateBufferSize int
-	PluginBufferSize       int
-	CacheBufferSize        int
+	DiscoveryBufferSize       int
+	MonitorStateBufferSize    int
+	PluginBufferSize          int
+	CacheBufferSize           int
+	DeviceValidatedBufferSize int
 }
 
 // PollingPipelineConfig configures buffer sizes for polling pipeline channels

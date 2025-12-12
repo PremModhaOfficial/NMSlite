@@ -84,6 +84,7 @@ metrics:
 discovery:
   max_discovery_workers: 100
   default_port_timeout_ms: 1000
+  handshake_timeout_ms: 5000
 
 # Plugin Configuration
 plugins:
@@ -97,6 +98,7 @@ channel:
   cache_events_channel_size: 50
   state_signal_channel_size: 50
   discovery_events_channel_size: 50
+  device_validated_channel_size: 100
 
 # Logging
 logging:

@@ -18,12 +18,11 @@ type Client struct {
 // NewClient creates a WinRM client based on the provided credentials
 // - If domain is empty, uses Basic Auth
 // - If domain is provided, uses NTLM Auth
-// - If use_https is true, uses HTTPS endpoint (typically port 5986)
+// - Port mapping: 5985 for HTTP, 5986 for HTTPS
 func NewClient(target string, port int, creds models.Credentials, timeout time.Duration) (*Client, error) {
 	endpoint := winrm.NewEndpoint(
 		target,
 		port,
-		creds.UseHTTPS,
 		true, // insecure - skip certificate verification
 		nil,  // CA certificate
 		nil,  // client certificate

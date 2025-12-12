@@ -28,7 +28,7 @@ A **thread-safe protocol registry** that manages protocol definitions (WinRM, SS
 - **ID:** `winrm`
 - **Default Port:** 5985
 - **Required:** username, password
-- **Optional:** domain, use_https
+- **Optional:** domain
 
 ### 2. SSH (Secure Shell)
 - **ID:** `ssh`

@@ -127,8 +127,7 @@ Follow this sequence for a complete test:
     "credential_data": {
         "username": "administrator",
         "password": "WindowsPassword123!",
-        "domain": "CORP",
-        "use_https": false
+        "domain": "CORP"
     }
 }
 ```

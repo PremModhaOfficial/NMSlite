@@ -53,6 +53,7 @@ func main() {
 	// Initialize and start workers
 	pluginRegistry, pluginExecutor, credService := startDiscoveryWorker(ctx, cfg, apiPool, events, authService, logger)
 	startScheduler(ctx, cfg, apiPool, pluginExecutor, pluginRegistry, credService, events, batchWriter, logger)
+	channels.StartProvisionHandler(ctx, events, db_gen.New(apiPool), logger)
 
 	// Start HTTP server
 	srv := initHTTPServer(cfg, authService, logger, apiPool, events)

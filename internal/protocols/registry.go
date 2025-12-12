@@ -73,6 +73,15 @@ func (r *Registry) initializeProtocols() {
 		DefaultPort: 161,
 		Version:     "1.0.0",
 	}, reflect.TypeOf(SNMPCredentials{}))
+
+	// SNMP v3 Protocol
+	r.registerProtocol(&Protocol{
+		ID:          "snmp-v3",
+		Name:        "SNMP v3",
+		Description: "Collects metrics via SNMP v3 (USM)",
+		DefaultPort: 161,
+		Version:     "1.0.0",
+	}, reflect.TypeOf(SNMPv3Credentials{}))
 }
 
 // registerProtocol registers a protocol with its credential type

@@ -52,6 +52,7 @@ func (h *MonitorHandler) Create(w http.ResponseWriter, r *http.Request) {
 		IPAddress              string `json:"ip_address"`
 		PluginID               string `json:"plugin_id"`
 		CredentialProfileID    string `json:"credential_profile_id"`
+		DiscoveryProfileID     string `json:"discovery_profile_id"`
 		PollingIntervalSeconds *int32 `json:"polling_interval_seconds"`
 		Port                   *int32 `json:"port"`
 	}
@@ -70,6 +71,14 @@ func (h *MonitorHandler) Create(w http.ResponseWriter, r *http.Request) {
 		sendError(w, r, http.StatusBadRequest, "VALIDATION_ERROR", "plugin_id is required", nil)
 		return
 	}
+	if input.CredentialProfileID == "" {
+		sendError(w, r, http.StatusBadRequest, "VALIDATION_ERROR", "credential_profile_id is required", nil)
+		return
+	}
+	if input.DiscoveryProfileID == "" {
+		sendError(w, r, http.StatusBadRequest, "VALIDATION_ERROR", "discovery_profile_id is required", nil)
+		return
+	}
 
 	// Parse IP address
 	ipAddr, err := database.StringToInet(input.IPAddress)
@@ -78,15 +87,18 @@ func (h *MonitorHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse credential profile ID if provided
-	var credUUID uuid.NullUUID
-	if input.CredentialProfileID != "" {
-		parsed, err := uuid.Parse(input.CredentialProfileID)
-		if err != nil {
-			sendError(w, r, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid credential_profile_id format", err)
-			return
-		}
-		credUUID = uuid.NullUUID{UUID: parsed, Valid: true}
+	// Parse credential profile ID
+	credUUID, err := uuid.Parse(input.CredentialProfileID)
+	if err != nil {
+		sendError(w, r, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid credential_profile_id format", err)
+		return
+	}
+
+	// Parse discovery profile ID
+	discUUID, err := uuid.Parse(input.DiscoveryProfileID)
+	if err != nil {
+		sendError(w, r, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid discovery_profile_id format", err)
+		return
 	}
 
 	// Build params - use defaults for display_name/hostname if not provided
@@ -105,7 +117,7 @@ func (h *MonitorHandler) Create(w http.ResponseWriter, r *http.Request) {
 		IpAddress:           ipAddr,
 		PluginID:            input.PluginID,
 		CredentialProfileID: credUUID,
-		DiscoveryProfileID:  uuid.NullUUID{Valid: false}, // null for manual creation
+		DiscoveryProfileID:  discUUID,
 		Port:                pgtype.Int4{Int32: 0, Valid: false},
 		Column8:             nil, // Use SQL default (60)
 		Column9:             nil, // Use SQL default ('active')
@@ -221,7 +233,7 @@ func (h *MonitorHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if input.CredentialProfileID != "" {
 		if id, err := uuid.Parse(input.CredentialProfileID); err == nil {
-			params.CredentialProfileID = uuid.NullUUID{UUID: id, Valid: true}
+			params.CredentialProfileID = id
 		}
 	}
 	if input.PollingIntervalSeconds > 0 {

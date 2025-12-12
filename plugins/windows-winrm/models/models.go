@@ -13,7 +13,6 @@ type Credentials struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 	Domain   string `json:"domain,omitempty"`
-	UseHTTPS bool   `json:"use_https"`
 }
 
 // PluginOutput represents the result sent back to the core via STDOUT

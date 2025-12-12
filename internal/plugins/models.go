@@ -5,7 +5,21 @@ type Credentials struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 	Domain   string `json:"domain,omitempty"`
-	UseHTTPS bool   `json:"use_https"`
+
+	// SSH specific
+	PrivateKey string `json:"private_key,omitempty"`
+	Passphrase string `json:"passphrase,omitempty"`
+
+	// SNMP v2c
+	Community string `json:"community,omitempty"`
+
+	// SNMP v3 (USM)
+	SecurityName  string `json:"security_name,omitempty"`
+	SecurityLevel string `json:"security_level,omitempty"`
+	AuthProtocol  string `json:"auth_protocol,omitempty"`
+	AuthPassword  string `json:"auth_password,omitempty"`
+	PrivProtocol  string `json:"priv_protocol,omitempty"`
+	PrivPassword  string `json:"priv_password,omitempty"`
 }
 
 // PollTask represents a single polling task

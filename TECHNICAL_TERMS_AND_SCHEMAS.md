@@ -262,7 +262,6 @@ type WinRMCredentials struct {
     Username string `json:"username" validate:"required,min=1"`
     Password string `json:"password" validate:"required,min=1"`
     Domain   string `json:"domain,omitempty"`
-    UseHTTPS bool   `json:"use_https"`
 }
 ```
 

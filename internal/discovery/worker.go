@@ -7,8 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
-	"net/netip"
 	"sync"
 	"time"
 
@@ -169,7 +167,7 @@ func (w *Worker) handleDiscoveryStartedEvent(ctx context.Context, event channels
 	)
 }
 
-// executeDiscovery runs the simplified auto-provision discovery process.
+// executeDiscovery runs discovery with protocol-specific handshake validation
 func (w *Worker) executeDiscovery(
 	ctx context.Context,
 	profile db_gen.DiscoveryProfile,
@@ -213,170 +211,133 @@ func (w *Worker) executeDiscovery(
 		slog.String("target_type", string(DetectTargetType(decryptedTarget))),
 	)
 
-	// Get port scan timeout, default to 1 second if not set
-	timeout := time.Duration(1000) * time.Millisecond
+	// Get handshake timeout, default to 5 seconds if not set
+	handshakeTimeout := time.Duration(5000) * time.Millisecond
 	if profile.PortScanTimeoutMs.Valid && profile.PortScanTimeoutMs.Int32 > 0 {
-		timeout = time.Duration(profile.PortScanTimeoutMs.Int32) * time.Millisecond
+		handshakeTimeout = time.Duration(profile.PortScanTimeoutMs.Int32) * time.Millisecond
 	}
 
-	monitorsCreated := 0
+	validatedCount := 0
 
 	// 2. For each IP address in the expanded target
 	for _, targetIP := range targetIPs {
 		// Check context cancellation
 		if err := ctx.Err(); err != nil {
-			return monitorsCreated, fmt.Errorf("discovery cancelled: %w", err)
+			return validatedCount, fmt.Errorf("discovery cancelled: %w", err)
 		}
 
 		// 2a. For each port
 		for _, port := range ports {
 			// Check context cancellation
 			if err := ctx.Err(); err != nil {
-				return monitorsCreated, fmt.Errorf("discovery cancelled: %w", err)
+				return validatedCount, fmt.Errorf("discovery cancelled: %w", err)
 			}
 
-			// 2b. TCP liveness check
-			if !w.isPortOpen(ctx, targetIP, port, timeout, logger) {
-				logger.DebugContext(ctx, "Port closed or unreachable",
-					slog.String("ip", targetIP),
+			// Find plugins that handle this port
+			matchingPlugins := w.registry.GetByPort(port)
+			if len(matchingPlugins) == 0 {
+				logger.DebugContext(ctx, "No plugin found for port, skipping",
 					slog.Int("port", port),
 				)
 				continue
 			}
 
-			logger.InfoContext(ctx, "Port open, saving to discovered_devices",
-				slog.String("ip", targetIP),
-				slog.Int("port", port),
-			)
+			// Try protocol handshake with each credential until success
+			validated := false
+			for _, credIDStr := range credentialIDs {
+				credID, err := uuid.Parse(credIDStr)
+				if err != nil {
+					logger.DebugContext(ctx, "Invalid credential ID format",
+						slog.String("credential_id", credIDStr),
+					)
+					continue
+				}
 
-			// 2c. Save to discovered_devices table
-			ipAddr, err := netip.ParseAddr(targetIP)
-			if err != nil {
-				logger.ErrorContext(ctx, "Failed to parse IP address",
-					slog.String("ip", targetIP),
-					slog.String("error", err.Error()),
-				)
-				continue
+				credProfile, err := w.querier.GetCredentialProfile(ctx, credID)
+				if err != nil {
+					logger.DebugContext(ctx, "Failed to fetch credential profile",
+						slog.String("credential_id", credIDStr),
+						slog.String("error", err.Error()),
+					)
+					continue
+				}
+
+				creds, err := w.credentials.GetDecrypted(ctx, credID)
+				if err != nil {
+					logger.DebugContext(ctx, "Failed to decrypt credentials",
+						slog.String("credential_id", credIDStr),
+						slog.String("error", err.Error()),
+					)
+					continue
+				}
+
+				// Try handshake with each matching plugin
+				for _, plugin := range matchingPlugins {
+					var result *HandshakeResult
+
+					switch plugin.Manifest.Protocol {
+					case "ssh":
+						result, _ = ValidateSSH(ctx, targetIP, port, creds, handshakeTimeout)
+					case "winrm":
+						result, _ = ValidateWinRM(ctx, targetIP, port, creds, handshakeTimeout)
+					case "snmp-v2c":
+						result, _ = ValidateSNMPv2c(ctx, targetIP, port, creds, handshakeTimeout)
+					case "snmp-v3":
+						result, _ = ValidateSNMPv3(ctx, targetIP, port, creds, handshakeTimeout)
+					default:
+						logger.WarnContext(ctx, "Unknown protocol, skipping handshake",
+							slog.String("protocol", plugin.Manifest.Protocol),
+						)
+						continue
+					}
+
+					if result != nil && result.Success {
+						logger.InfoContext(ctx, "Protocol handshake succeeded",
+							slog.String("ip", targetIP),
+							slog.Int("port", port),
+							slog.String("protocol", plugin.Manifest.Protocol),
+							slog.String("credential_id", credID.String()),
+						)
+
+						// Publish DeviceValidatedEvent - handler creates DB entries
+						select {
+						case w.events.DeviceValidated <- channels.DeviceValidatedEvent{
+							DiscoveryProfile:  profile,
+							CredentialProfile: credProfile,
+							Plugin:            plugin,
+							IP:                targetIP,
+							Port:              port,
+						}:
+							validatedCount++
+							validated = true
+						case <-ctx.Done():
+							return validatedCount, ctx.Err()
+						default:
+							logger.WarnContext(ctx, "DeviceValidated channel full, event dropped")
+						}
+
+						break // First success, move to next IP/port combo
+					}
+				}
+
+				if validated {
+					break // First credential that worked, move to next IP/port
+				}
 			}
 
-			discoveredDevice, err := w.querier.CreateDiscoveredDevice(ctx, db_gen.CreateDiscoveredDeviceParams{
-				DiscoveryProfileID: uuid.NullUUID{UUID: profile.ID, Valid: true},
-				IpAddress:          ipAddr,
-				Hostname:           pgtype.Text{Valid: false}, // null initially
-				Port:               int32(port),
-				Status:             pgtype.Text{String: "new", Valid: true},
-			})
-
-			if err != nil {
-				logger.ErrorContext(ctx, "Failed to save discovered device",
+			if !validated {
+				logger.DebugContext(ctx, "No valid credentials for port",
 					slog.String("ip", targetIP),
 					slog.Int("port", port),
-					slog.String("error", err.Error()),
-				)
-				continue
-			}
-
-			// 2d. If auto_provision is enabled, create monitor
-			if profile.AutoProvision.Valid && profile.AutoProvision.Bool {
-				logger.InfoContext(ctx, "Auto-provision enabled, creating monitor",
-					slog.String("ip", targetIP),
-					slog.Int("port", port),
-				)
-
-				// Find plugins that handle this port
-				matchingPlugins := w.registry.GetByPort(port)
-				if len(matchingPlugins) == 0 {
-					logger.InfoContext(ctx, "No plugin found for port, skipping auto-provision",
-						slog.Int("port", port),
-					)
-					continue
-				}
-
-				// Take first plugin
-				plugin := matchingPlugins[0]
-
-				// Take first credential
-				credID, err := uuid.Parse(credentialIDs[0])
-				if err != nil {
-					logger.WarnContext(ctx, "Invalid credential ID",
-						slog.String("credential_id", credentialIDs[0]),
-						slog.String("error", err.Error()),
-					)
-					continue
-				}
-
-				// Create monitor
-				ipAddr, err := netip.ParseAddr(targetIP)
-				if err != nil {
-					logger.ErrorContext(ctx, "Failed to parse IP address for monitor",
-						slog.String("ip", targetIP),
-						slog.String("error", err.Error()),
-					)
-					continue
-				}
-
-				_, err = w.querier.CreateMonitor(ctx, db_gen.CreateMonitorParams{
-					DisplayName:         pgtype.Text{Valid: false}, // Will be populated during polling
-					Hostname:            pgtype.Text{Valid: false}, // Will be populated during polling
-					IpAddress:           ipAddr,
-					PluginID:            plugin.Manifest.ID,
-					CredentialProfileID: uuid.NullUUID{UUID: credID, Valid: true},
-					DiscoveryProfileID:  uuid.NullUUID{UUID: profile.ID, Valid: true},
-					Port:                pgtype.Int4{Int32: int32(port), Valid: true},
-				})
-
-				if err != nil {
-					logger.ErrorContext(ctx, "Failed to create monitor",
-						slog.String("plugin", plugin.Manifest.ID),
-						slog.String("error", err.Error()),
-					)
-					continue
-				}
-
-				// Update discovered_device status to "provisioned"
-				err = w.querier.UpdateDiscoveredDeviceStatus(ctx, db_gen.UpdateDiscoveredDeviceStatusParams{
-					ID:     discoveredDevice.ID,
-					Status: pgtype.Text{String: "provisioned", Valid: true},
-				})
-
-				if err != nil {
-					logger.WarnContext(ctx, "Failed to update discovered device status",
-						slog.String("device_id", discoveredDevice.ID.String()),
-						slog.String("error", err.Error()),
-					)
-				}
-
-				monitorsCreated++
-				logger.InfoContext(ctx, "Monitor auto-created for device",
-					slog.String("ip", targetIP),
-					slog.Int("port", port),
-					slog.String("plugin", plugin.Manifest.ID),
 				)
 			}
 		}
 	}
 
-	return monitorsCreated, nil
+	return validatedCount, nil
 }
 
 // isPortOpen checks if a TCP port is open on the target
-func (w *Worker) isPortOpen(ctx context.Context, target string, port int, timeout time.Duration, logger *slog.Logger) bool {
-	address := fmt.Sprintf("%s:%d", target, port)
-
-	scanCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	conn, err := (&net.Dialer{}).DialContext(scanCtx, "tcp", address)
-	if err != nil {
-		logger.DebugContext(ctx, "Dial failed",
-			slog.String("address", address),
-			slog.String("error", err.Error()),
-		)
-		return false
-	}
-	conn.Close()
-	return true
-}
 
 // publishCompletedEvent publishes a discovery completion event to the event bus.
 func (w *Worker) publishCompletedEvent(

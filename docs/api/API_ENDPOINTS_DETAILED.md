@@ -118,8 +118,7 @@ Returns all available protocols with their metadata.
   "credential_details": {
     "username": "admin_user",
     "password": "SecurePassword123!",
-    "domain": "internal.corp",
-    "use_https": false
+    "domain": "internal.corp"
   }
 }
 ```

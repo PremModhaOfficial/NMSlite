@@ -5,8 +5,7 @@
     "port": 15985,
     "credentials": {
       "username": "vboxuser",
-      "password": "admin",
-      "use_https": false
+      "password": "admin"
     }
   }
 ]

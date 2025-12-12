@@ -288,7 +288,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"name\": \"WinRM Credentials\",\n    \"description\": \"Windows Remote Management credentials\",\n    \"protocol\": \"winrm\",\n    \"credential_data\": {\n        \"username\": \"administrator\",\n        \"password\": \"WindowsPassword123!\",\n        \"domain\": \"CORP\",\n        \"use_https\": false\n    }\n}"
+							"raw": "{\n    \"name\": \"WinRM Credentials\",\n    \"description\": \"Windows Remote Management credentials\",\n    \"protocol\": \"winrm\",\n    \"credential_data\": {\n        \"username\": \"administrator\",\n        \"password\": \"WindowsPassword123!\",\n        \"domain\": \"CORP\"\n    }\n}"
 						},
 						"url": "{{base_url}}/api/v1/credentials",
 						"description": "Create a new WinRM credential profile for Windows servers."

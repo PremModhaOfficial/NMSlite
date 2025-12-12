@@ -58,11 +58,7 @@ func processTask(task models.PluginInput) models.PluginOutput {
 	// Default port if not specified
 	port := task.Port
 	if port == 0 {
-		if task.Credentials.UseHTTPS {
-			port = 5986
-		} else {
-			port = 5985
-		}
+		port = 5985
 	}
 
 	// Create WinRM client

@@ -107,6 +107,7 @@ type MetricsConfig struct {
 type DiscoveryConfig struct {
 	MaxDiscoveryWorkers  int `yaml:"max_discovery_workers"`
 	DefaultPortTimeoutMS int `yaml:"default_port_timeout_ms"`
+	HandshakeTimeoutMS   int `yaml:"handshake_timeout_ms"`
 }
 
 type PluginsConfig struct {
@@ -120,6 +121,7 @@ type EventBusConfig struct {
 	CacheEventsChannelSize     int `yaml:"cache_events_channel_size"`
 	StateSignalChannelSize     int `yaml:"state_signal_channel_size"`
 	DiscoveryEventsChannelSize int `yaml:"discovery_events_channel_size"`
+	DeviceValidatedChannelSize int `yaml:"device_validated_channel_size"`
 }
 
 type LoggingConfig struct {
@@ -208,6 +210,11 @@ func applyEnvOverrides(cfg *Config) {
 		cfg.Auth.EncryptionKey = v
 	}
 
+	// Discovery overrides
+	if v := os.Getenv("NMS_DISCOVERY_HANDSHAKE_TIMEOUT_MS"); v != "" {
+		fmt.Sscanf(v, "%d", &cfg.Discovery.HandshakeTimeoutMS)
+	}
+
 	// EventBus overrides
 	if v := os.Getenv("NMS_EVENTBUS_POLL_JOBS_CHANNEL_SIZE"); v != "" {
 		fmt.Sscanf(v, "%d", &cfg.Channel.PollJobsChannelSize)
@@ -223,6 +230,9 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v := os.Getenv("NMS_EVENTBUS_DISCOVERY_EVENTS_CHANNEL_SIZE"); v != "" {
 		fmt.Sscanf(v, "%d", &cfg.Channel.DiscoveryEventsChannelSize)
+	}
+	if v := os.Getenv("NMS_CHANNEL_DEVICE_VALIDATED_CHANNEL_SIZE"); v != "" {
+		fmt.Sscanf(v, "%d", &cfg.Channel.DeviceValidatedChannelSize)
 	}
 }
 

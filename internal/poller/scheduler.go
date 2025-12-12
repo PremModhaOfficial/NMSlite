@@ -354,15 +354,8 @@ func (s *SchedulerImpl) executePlugin(ctx context.Context, sm *ScheduledMonitor)
 		return
 	}
 
-	// Get credential ID, handle null case
-	var credID uuid.UUID
-	if sm.Monitor.CredentialProfileID.Valid {
-		credID = sm.Monitor.CredentialProfileID.UUID
-	} else {
-		logger.Error("monitor has no credential profile")
-		s.handleFailure(sm, "no credential profile configured")
-		return
-	}
+	// Get credential ID (now guaranteed to be non-null from DB constraint)
+	credID := sm.Monitor.CredentialProfileID
 
 	// Get credentials
 	cred, err := s.credService.GetDecrypted(ctx, credID)

@@ -21,7 +21,7 @@ We've successfully implemented a **Protocol Handler** and **Schema Registry** sy
 1. **WinRM** (Windows Remote Management)
    - Default Port: 5985
    - Required Fields: username, password
-   - Optional Fields: domain, use_https
+    - Optional Fields: domain
 
 2. **SSH** (Secure Shell)
    - Default Port: 22
@@ -95,8 +95,7 @@ Error/Success Response
   "properties": {
     "username": { "type": "string", "minLength": 1 },
     "password": { "type": "string", "minLength": 1 },
-    "domain": { "type": "string" },
-    "use_https": { "type": "boolean", "default": false }
+     "domain": { "type": "string" }
   }
 }
 ```
@@ -195,18 +194,12 @@ curl -X GET http://localhost:8080/api/v1/protocols/winrm/schema \
         "description": "Windows user password",
         "minLength": 1
       },
-      "domain": {
-        "type": "string",
-        "title": "Domain",
-        "description": "Windows domain (optional)",
-        "default": ""
-      },
-      "use_https": {
-        "type": "boolean",
-        "title": "Use HTTPS",
-        "description": "Use HTTPS instead of HTTP",
-        "default": false
-      }
+       "domain": {
+         "type": "string",
+         "title": "Domain",
+         "description": "Windows domain (optional)",
+         "default": ""
+       }
     }
   }
 }

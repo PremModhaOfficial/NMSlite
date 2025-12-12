@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/nmslite/nmslite/internal/database/db_gen"
+	"github.com/nmslite/nmslite/internal/plugins"
 )
 
 // DiscoveryStartedEvent is published when a discovery begins execution
@@ -22,6 +24,15 @@ type DiscoveryCompletedEvent struct {
 	DevicesFound int
 	StartedAt    time.Time
 	CompletedAt  time.Time
+}
+
+// DeviceValidatedEvent - published when protocol handshake succeeds
+type DeviceValidatedEvent struct {
+	DiscoveryProfile  db_gen.DiscoveryProfile
+	CredentialProfile db_gen.CredentialProfile
+	Plugin            *plugins.PluginInfo
+	IP                string
+	Port              int
 }
 
 // MonitorDownEvent is published when a monitor fails health checks
@@ -67,6 +78,7 @@ type EventChannels struct {
 	// Discovery events
 	DiscoveryStarted   chan DiscoveryStartedEvent
 	DiscoveryCompleted chan DiscoveryCompletedEvent
+	DeviceValidated    chan DeviceValidatedEvent
 
 	// Monitor state events
 	MonitorDown      chan MonitorDownEvent
@@ -89,6 +101,7 @@ func NewEventChannels(ctx context.Context, cfg EventChannelsConfig) *EventChanne
 	return &EventChannels{
 		DiscoveryStarted:   make(chan DiscoveryStartedEvent, cfg.DiscoveryBufferSize),
 		DiscoveryCompleted: make(chan DiscoveryCompletedEvent, cfg.DiscoveryBufferSize),
+		DeviceValidated:    make(chan DeviceValidatedEvent, cfg.DiscoveryBufferSize),
 		MonitorDown:        make(chan MonitorDownEvent, cfg.MonitorStateBufferSize),
 		MonitorRecovered:   make(chan MonitorRecoveredEvent, cfg.MonitorStateBufferSize),
 		PluginTimeout:      make(chan PluginTimeoutEvent, cfg.PluginBufferSize),
@@ -106,6 +119,7 @@ func (ec *EventChannels) Close() error {
 	// Close all channels to signal consumers to exit
 	close(ec.DiscoveryStarted)
 	close(ec.DiscoveryCompleted)
+	close(ec.DeviceValidated)
 	close(ec.MonitorDown)
 	close(ec.MonitorRecovered)
 	close(ec.PluginTimeout)

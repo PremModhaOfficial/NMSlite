@@ -63,8 +63,38 @@ func (s *Service) GetDecrypted(ctx context.Context, profileID uuid.UUID) (*plugi
 	if domain, ok := credMap["domain"].(string); ok {
 		creds.Domain = domain
 	}
-	if useHTTPS, ok := credMap["use_https"].(bool); ok {
-		creds.UseHTTPS = useHTTPS
+
+	// SSH
+	if pk, ok := credMap["private_key"].(string); ok {
+		creds.PrivateKey = pk
+	}
+	if pp, ok := credMap["passphrase"].(string); ok {
+		creds.Passphrase = pp
+	}
+
+	// SNMP v2c
+	if comm, ok := credMap["community"].(string); ok {
+		creds.Community = comm
+	}
+
+	// SNMP v3
+	if sn, ok := credMap["security_name"].(string); ok {
+		creds.SecurityName = sn
+	}
+	if sl, ok := credMap["security_level"].(string); ok {
+		creds.SecurityLevel = sl
+	}
+	if ap, ok := credMap["auth_protocol"].(string); ok {
+		creds.AuthProtocol = ap
+	}
+	if auth, ok := credMap["auth_password"].(string); ok {
+		creds.AuthPassword = auth
+	}
+	if pp, ok := credMap["priv_protocol"].(string); ok {
+		creds.PrivProtocol = pp
+	}
+	if priv, ok := credMap["priv_password"].(string); ok {
+		creds.PrivPassword = priv
 	}
 
 	return creds, nil
