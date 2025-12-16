@@ -128,7 +128,7 @@ func (m *MockQuerier) CreateDiscoveryProfile(ctx context.Context, arg dbgen.Crea
 	return dbgen.DiscoveryProfile{}, nil
 }
 func (m *MockQuerier) DeleteDiscoveryProfile(ctx context.Context, id uuid.UUID) error { return nil }
-func (m *MockQuerier) GetAllMetricNames(ctx context.Context, dollar_1 []uuid.UUID) ([]string, error) {
+func (m *MockQuerier) GetAllMetricNames(ctx context.Context, deviceIds []uuid.UUID) ([]string, error) {
 	return nil, nil
 }
 func (m *MockQuerier) GetDiscoveredDevice(ctx context.Context, id uuid.UUID) (dbgen.DiscoveredDevice, error) {

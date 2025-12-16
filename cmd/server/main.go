@@ -116,7 +116,7 @@ func initAuthService() *auth.Service {
 
 func initEventChannels(ctx context.Context) *channels.EventChannels {
 	// Refactored to use config.Get() internally in NewEventChannels
-	events := channels.NewEventChannels(ctx)
+	events := channels.NewEventChannels()
 
 	// Log what was configured (need to access config solely for logging)
 	cfg := globals.GetConfig()

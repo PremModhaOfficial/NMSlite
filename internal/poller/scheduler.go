@@ -226,15 +226,26 @@ func (s *SchedulerImpl) tick(ctx context.Context) {
 	now := time.Now()
 	nextTick := now.Add(s.tickInterval)
 
-	s.heapMu.Lock()
+	// Step 1: Dequeue all due monitors
+	dueMonitors := s.dequeueDueMonitors(nextTick)
 
-	// Step 1: Dequeue all due monitors into a local list
-	// We capture the ORIGINAL deadline for processing, as rescheduling will change it.
-	type scheduledItem struct {
-		sm       *ScheduledMonitor
-		deadline time.Time
+	if len(dueMonitors) == 0 {
+		return
 	}
-	var dueItems []scheduledItem
+
+	// Step 2: Process monitors immediately
+	// We no longer batch by second or use timers. We rely on the semaphores in processPluginBatch
+	// to throttle execution.
+	s.processMonitors(ctx, dueMonitors)
+}
+
+// dequeueDueMonitors removes all monitors due before nextTick from the heap,
+// reschedules them for the future, and returns the list of monitors to process.
+func (s *SchedulerImpl) dequeueDueMonitors(nextTick time.Time) []*ScheduledMonitor {
+	s.heapMu.Lock()
+	defer s.heapMu.Unlock()
+
+	var dueItems []*ScheduledMonitor
 
 	for len(s.heap) > 0 {
 		sm := s.heap[0]
@@ -242,114 +253,52 @@ func (s *SchedulerImpl) tick(ctx context.Context) {
 			break
 		}
 		item := heap.Pop(&s.heap).(*ScheduledMonitor)
-		dueItems = append(dueItems, scheduledItem{
-			sm:       item,
-			deadline: item.NextPollDeadline,
-		})
+		dueItems = append(dueItems, item)
+
+		// Reschedule immediately so they are ready for next cycle
+		s.rescheduleUnlocked(item)
 	}
 
-	// Step 2: Reschedule all monitors immediately
-	// This ensures the heap is ready for the next tick, regardless of processing outcome
-	for _, item := range dueItems {
-		s.rescheduleUnlocked(item.sm)
-	}
+	return dueItems
+}
 
-	s.heapMu.Unlock()
+// processMonitors groups monitors by plugin and dispatches them to worker routines
+func (s *SchedulerImpl) processMonitors(ctx context.Context, monitors []*ScheduledMonitor) {
+	// Group by PluginID
+	pluginBatches := make(map[string][]*ScheduledMonitor)
 
-	// Step 3: Process the local list (Filter & Batch)
-	// Key: Unix timestamp (seconds), Value: list of monitors due at that second
-	mapCapacity := int(s.tickInterval.Seconds()) / 2
-	if mapCapacity < 1 {
-		mapCapacity = 1
-	}
-	deadlineBatches := make(map[int64][]*ScheduledMonitor, mapCapacity)
-
-	for _, item := range dueItems {
-		sm := item.sm
-
-		// Lazy deletion and IsPolling check with minimal locking
+	for _, sm := range monitors {
+		// Quick check if monitor is still valid and not polling
 		s.heapMu.Lock()
 		current, exists := s.monitors[sm.Monitor.ID]
 		isValid := exists && current == sm
 		isPolling := sm.IsPolling
+
 		if isValid && !isPolling {
-			sm.IsPolling = true // Mark as polling under lock
+			sm.IsPolling = true
 		}
 		s.heapMu.Unlock()
 
 		if !isValid {
-			s.logger.Debug("dropping invalid monitor", "monitor_id", sm.Monitor.ID)
 			continue
 		}
-
 		if isPolling {
 			s.logger.Debug("skipping poll, already in progress", "monitor_id", sm.Monitor.ID)
 			continue
 		}
 
-		// Group by ORIGINAL deadline second
-		deadlineKey := item.deadline.Unix()
-		deadlineBatches[deadlineKey] = append(deadlineBatches[deadlineKey], sm)
+		pluginBatches[sm.Monitor.PluginID] = append(pluginBatches[sm.Monitor.PluginID], sm)
 	}
 
-	// Schedule one timer per deadline batch
-	for deadlineUnix, batch := range deadlineBatches {
-		batch := batch // capture loop variable
-		deadlineTime := time.Unix(deadlineUnix, 0)
-
-		// Calculate delay until this batch's deadline
-		delay := deadlineTime.Sub(now)
-		if delay < 0 {
-			delay = 0 // Already overdue, process immediately
-		}
-
+	// Dispatch batches
+	for pluginID, batch := range pluginBatches {
+		pluginID := pluginID
+		batch := batch
 		s.wg.Add(1)
 		go func() {
 			defer s.wg.Done()
-
-			// Wait until the exact deadline for this batch
-			if delay > 0 {
-				timer := time.NewTimer(delay)
-				select {
-				case <-timer.C:
-					// Deadline reached
-				case <-ctx.Done():
-					timer.Stop()
-					s.logger.Debug("batch poll cancelled before deadline",
-						"batch_size", len(batch))
-					return
-				}
-			}
-
-			// Sub-group batch by plugin ID
-			pluginBatches := make(map[string][]*ScheduledMonitor)
-			for _, sm := range batch {
-				pluginBatches[sm.Monitor.PluginID] = append(pluginBatches[sm.Monitor.PluginID], sm)
-			}
-
-			// Process each plugin batch concurrently
-			var pluginWg sync.WaitGroup
-			for pluginID, pluginMonitors := range pluginBatches {
-				pluginID := pluginID
-				pluginMonitors := pluginMonitors
-				pluginWg.Add(1)
-				go func() {
-					defer pluginWg.Done()
-					s.processPluginBatch(ctx, pluginID, pluginMonitors)
-				}()
-			}
-			pluginWg.Wait()
+			s.processPluginBatch(ctx, pluginID, batch)
 		}()
-	}
-
-	if len(deadlineBatches) > 0 {
-		totalMonitors := 0
-		for _, batch := range deadlineBatches {
-			totalMonitors += len(batch)
-		}
-		s.logger.Debug("tick scheduled monitors with batched timers",
-			"batches", len(deadlineBatches),
-			"total_monitors", totalMonitors)
 	}
 }
 

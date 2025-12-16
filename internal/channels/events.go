@@ -3,7 +3,6 @@
 package channels
 
 import (
-	"context"
 	"time"
 
 	"github.com/google/uuid"
@@ -91,7 +90,7 @@ type EventChannels struct {
 }
 
 // NewEventChannels creates a new EventChannels hub with configured buffer sizes
-func NewEventChannels(ctx context.Context) *EventChannels {
+func NewEventChannels() *EventChannels {
 	cfg := globals.GetConfig().Channel
 
 	discoverySize := cfg.DiscoveryEventsChannelSize

@@ -15,7 +15,9 @@ INSERT INTO monitors (
     polling_interval_seconds,
     status
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, COALESCE($8, 60), COALESCE($9, 'active')
+    $1, $2, $3, $4, $5, $6, $7, 
+    COALESCE(sqlc.narg(polling_interval_seconds)::int, 60), 
+    COALESCE(sqlc.narg(status)::text, 'active')
 )
 RETURNING *;
 
@@ -64,4 +66,4 @@ WHERE id = $1 AND deleted_at IS NULL;
 -- name: GetExistingMonitorIDs :many
 -- Returns only monitor IDs that exist and are not soft-deleted.
 -- Used to validate a batch of IDs before metrics queries.
-SELECT id FROM monitors WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL;
+SELECT id FROM monitors WHERE id = ANY(sqlc.arg(monitor_ids)::uuid[]) AND deleted_at IS NULL;

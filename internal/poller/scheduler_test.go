@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/netip"
@@ -29,19 +30,19 @@ type MockQuerier struct {
 	ActiveMonitors []dbgen.ListActiveMonitorsWithCredentialsRow
 }
 
-func (m *MockQuerier) ListActiveMonitorsWithCredentials(ctx context.Context) ([]dbgen.ListActiveMonitorsWithCredentialsRow, error) {
+func (m *MockQuerier) ListActiveMonitorsWithCredentials(context.Context) ([]dbgen.ListActiveMonitorsWithCredentialsRow, error) {
 	return m.ActiveMonitors, nil
 }
 
-func (m *MockQuerier) UpdateMonitorStatus(ctx context.Context, arg dbgen.UpdateMonitorStatusParams) error {
+func (m *MockQuerier) UpdateMonitorStatus(context.Context, dbgen.UpdateMonitorStatusParams) error {
 	return nil
 }
 
-func (m *MockQuerier) GetMonitor(ctx context.Context, id uuid.UUID) (dbgen.Monitor, error) {
+func (m *MockQuerier) GetMonitor(context.Context, uuid.UUID) (dbgen.Monitor, error) {
 	return dbgen.Monitor{}, fmt.Errorf("not implemented")
 }
 
-func (m *MockQuerier) GetCredentialProfile(ctx context.Context, id uuid.UUID) (dbgen.CredentialProfile, error) {
+func (m *MockQuerier) GetCredentialProfile(context.Context, uuid.UUID) (dbgen.CredentialProfile, error) {
 	return dbgen.CredentialProfile{}, fmt.Errorf("not implemented")
 }
 
@@ -87,10 +88,28 @@ echo '[{"request_id": "req-1", "status": "success", "result": {}}]'
 
 	// 2. Setup Dependencies
 	// Initialize config for test
-	globals.InitGlobal()
+	// globals.InitGlobal() // Removed: unnecessary as SetGlobalConfigForTests is used below
+
+	// Config - initialize global for scheduler to use
+	testConfig := &globals.Config{
+		Scheduler: globals.SchedulerConfig{
+			TickIntervalMS:    2000, // 2s tick
+			LivenessTimeoutMS: 100,
+			PluginTimeoutMS:   2000,
+			LivenessWorkers:   1,
+			PluginWorkers:     5,
+			DownThreshold:     3,
+		},
+		Channel: globals.EventBusConfig{ // Added channel config as NewEventChannels needs it
+			DiscoveryEventsChannelSize: 50,
+			StateSignalChannelSize:     50,
+			CacheEventsChannelSize:     50,
+		},
+	}
+	globals.SetGlobalConfigForTests(testConfig)
 
 	// Create scheduler dependencies
-	eventChans := channels.NewEventChannels(context.Background())
+	eventChans := channels.NewEventChannels()
 
 	registry := pluginManager.NewRegistry(tmpDir)
 	if err := registry.Scan(); err != nil {
@@ -160,19 +179,6 @@ echo '[{"request_id": "req-1", "status": "success", "result": {}}]'
 	// Re-create cred service with mock querier
 	credService := credentials.NewService(authSvc, mockQuerier)
 
-	// Config - initialize global for scheduler to use
-	testConfig := &globals.Config{
-		Scheduler: globals.SchedulerConfig{
-			TickIntervalMS:    2000, // 2s tick
-			LivenessTimeoutMS: 100,
-			PluginTimeoutMS:   2000,
-			LivenessWorkers:   1,
-			PluginWorkers:     5,
-			DownThreshold:     3,
-		},
-	}
-	globals.SetGlobalConfigForTests(testConfig)
-
 	scheduler := NewSchedulerImpl(
 		mockQuerier,
 		eventChans,
@@ -188,7 +194,7 @@ echo '[{"request_id": "req-1", "status": "success", "result": {}}]'
 
 	// Run scheduler in goroutine
 	go func() {
-		if err := scheduler.Run(ctx); err != nil && err != context.Canceled && err != context.DeadlineExceeded {
+		if err := scheduler.Run(ctx); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 			// ignore expected cancel
 		}
 	}()

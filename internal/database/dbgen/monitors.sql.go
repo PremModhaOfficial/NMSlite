@@ -26,21 +26,23 @@ INSERT INTO monitors (
     polling_interval_seconds,
     status
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, COALESCE($8, 60), COALESCE($9, 'active')
+    $1, $2, $3, $4, $5, $6, $7, 
+    COALESCE($8::int, 60), 
+    COALESCE($9::text, 'active')
 )
 RETURNING id, display_name, hostname, ip_address, plugin_id, credential_profile_id, discovery_profile_id, polling_interval_seconds, status, created_at, updated_at, deleted_at, port
 `
 
 type CreateMonitorParams struct {
-	DisplayName         pgtype.Text `json:"display_name"`
-	Hostname            pgtype.Text `json:"hostname"`
-	IpAddress           netip.Addr  `json:"ip_address"`
-	PluginID            string      `json:"plugin_id"`
-	CredentialProfileID uuid.UUID   `json:"credential_profile_id"`
-	DiscoveryProfileID  uuid.UUID   `json:"discovery_profile_id"`
-	Port                pgtype.Int4 `json:"port"`
-	Column8             interface{} `json:"column_8"`
-	Column9             interface{} `json:"column_9"`
+	DisplayName            pgtype.Text `json:"display_name"`
+	Hostname               pgtype.Text `json:"hostname"`
+	IpAddress              netip.Addr  `json:"ip_address"`
+	PluginID               string      `json:"plugin_id"`
+	CredentialProfileID    uuid.UUID   `json:"credential_profile_id"`
+	DiscoveryProfileID     uuid.UUID   `json:"discovery_profile_id"`
+	Port                   pgtype.Int4 `json:"port"`
+	PollingIntervalSeconds pgtype.Int4 `json:"polling_interval_seconds"`
+	Status                 pgtype.Text `json:"status"`
 }
 
 func (q *Queries) CreateMonitor(ctx context.Context, arg CreateMonitorParams) (Monitor, error) {
@@ -52,8 +54,8 @@ func (q *Queries) CreateMonitor(ctx context.Context, arg CreateMonitorParams) (M
 		arg.CredentialProfileID,
 		arg.DiscoveryProfileID,
 		arg.Port,
-		arg.Column8,
-		arg.Column9,
+		arg.PollingIntervalSeconds,
+		arg.Status,
 	)
 	var i Monitor
 	err := row.Scan(
@@ -91,8 +93,8 @@ SELECT id FROM monitors WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL
 
 // Returns only monitor IDs that exist and are not soft-deleted.
 // Used to validate a batch of IDs before metrics queries.
-func (q *Queries) GetExistingMonitorIDs(ctx context.Context, dollar_1 []uuid.UUID) ([]uuid.UUID, error) {
-	rows, err := q.db.Query(ctx, getExistingMonitorIDs, dollar_1)
+func (q *Queries) GetExistingMonitorIDs(ctx context.Context, monitorIds []uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, getExistingMonitorIDs, monitorIds)
 	if err != nil {
 		return nil, err
 	}

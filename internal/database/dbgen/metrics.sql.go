@@ -20,8 +20,8 @@ ORDER BY name
 `
 
 // Get all unique metric names (for discovery/autocomplete)
-func (q *Queries) GetAllMetricNames(ctx context.Context, dollar_1 []uuid.UUID) ([]string, error) {
-	rows, err := q.db.Query(ctx, getAllMetricNames, dollar_1)
+func (q *Queries) GetAllMetricNames(ctx context.Context, deviceIds []uuid.UUID) ([]string, error) {
+	rows, err := q.db.Query(ctx, getAllMetricNames, deviceIds)
 	if err != nil {
 		return nil, err
 	}
@@ -52,19 +52,19 @@ ORDER BY device_id, name, timestamp DESC
 `
 
 type GetLatestMetricsByDeviceAndPrefixParams struct {
-	Column1     []uuid.UUID        `json:"column_1"`
-	Name        string             `json:"name"`
-	Timestamp   pgtype.Timestamptz `json:"timestamp"`
-	Timestamp_2 pgtype.Timestamptz `json:"timestamp_2"`
+	DeviceIds         []uuid.UUID        `json:"device_ids"`
+	MetricNamePattern string             `json:"metric_name_pattern"`
+	StartTime         pgtype.Timestamptz `json:"start_time"`
+	EndTime           pgtype.Timestamptz `json:"end_time"`
 }
 
 // Query the latest value for each metric (per device) with prefix matching
 func (q *Queries) GetLatestMetricsByDeviceAndPrefix(ctx context.Context, arg GetLatestMetricsByDeviceAndPrefixParams) ([]Metric, error) {
 	rows, err := q.db.Query(ctx, getLatestMetricsByDeviceAndPrefix,
-		arg.Column1,
-		arg.Name,
-		arg.Timestamp,
-		arg.Timestamp_2,
+		arg.DeviceIds,
+		arg.MetricNamePattern,
+		arg.StartTime,
+		arg.EndTime,
 	)
 	if err != nil {
 		return nil, err
@@ -102,21 +102,21 @@ LIMIT $5
 `
 
 type GetMetricsByDeviceAndPrefixParams struct {
-	Column1     []uuid.UUID        `json:"column_1"`
-	Name        string             `json:"name"`
-	Timestamp   pgtype.Timestamptz `json:"timestamp"`
-	Timestamp_2 pgtype.Timestamptz `json:"timestamp_2"`
-	Limit       int32              `json:"limit"`
+	DeviceIds         []uuid.UUID        `json:"device_ids"`
+	MetricNamePattern string             `json:"metric_name_pattern"`
+	StartTime         pgtype.Timestamptz `json:"start_time"`
+	EndTime           pgtype.Timestamptz `json:"end_time"`
+	LimitCount        int32              `json:"limit_count"`
 }
 
 // Query metrics for devices with prefix matching (SNMP subtree style)
 func (q *Queries) GetMetricsByDeviceAndPrefix(ctx context.Context, arg GetMetricsByDeviceAndPrefixParams) ([]Metric, error) {
 	rows, err := q.db.Query(ctx, getMetricsByDeviceAndPrefix,
-		arg.Column1,
-		arg.Name,
-		arg.Timestamp,
-		arg.Timestamp_2,
-		arg.Limit,
+		arg.DeviceIds,
+		arg.MetricNamePattern,
+		arg.StartTime,
+		arg.EndTime,
+		arg.LimitCount,
 	)
 	if err != nil {
 		return nil, err

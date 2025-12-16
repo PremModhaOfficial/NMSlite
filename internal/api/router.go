@@ -6,11 +6,14 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/nmslite/nmslite/internal/api/common"
+	"github.com/nmslite/nmslite/internal/api/handlers"
 	"github.com/nmslite/nmslite/internal/auth"
 	"github.com/nmslite/nmslite/internal/channels"
 	"github.com/nmslite/nmslite/internal/database/dbgen"
 	"github.com/nmslite/nmslite/internal/globals"
 	"github.com/nmslite/nmslite/internal/middleware"
+	"github.com/nmslite/nmslite/internal/protocols"
 )
 
 // NewRouter NewRouter creates and configures the API router
@@ -34,14 +37,22 @@ func NewRouter(authService *auth.Service, db *pgxpool.Pool, events *channels.Eve
 		))
 	}
 
-	// Initialize handlers
+	// Initialize dependencies
 	queries := dbgen.New(db)
+	deps := &common.Dependencies{
+		Q:        queries,
+		Auth:     authService,
+		Events:   events,
+		Registry: protocols.GetRegistry(),
+		Logger:   logger,
+	}
+
+	// Initialize handlers
 	healthHandler := NewHealthHandler()
-	authHandler := NewAuthHandler(authService)
-	credentialHandler := NewCredentialHandler(queries, authService, events)
-	discoveryHandler := NewDiscoveryHandler(queries, authService, events)
-	monitorHandler := NewMonitorHandler(queries, events)
-	protocolHandler := NewProtocolHandler()
+	systemHandler := handlers.NewSystemHandler(deps)
+	credentialHandler := handlers.NewCredentialHandler(deps)
+	discoveryHandler := handlers.NewDiscoveryHandler(deps)
+	monitorHandler := handlers.NewMonitorHandler(deps)
 
 	// Public routes (no auth required)
 	r.Get("/health", healthHandler.Health)
@@ -50,7 +61,7 @@ func NewRouter(authService *auth.Service, db *pgxpool.Pool, events *channels.Eve
 	// API v1 routes
 	r.Route("/api/v1", func(r chi.Router) {
 		// Public auth endpoint
-		r.Post("/login", authHandler.Login)
+		r.Post("/login", systemHandler.Login)
 
 		// Protected routes (require JWT)
 		r.Group(func(r chi.Router) {
@@ -91,7 +102,7 @@ func NewRouter(authService *auth.Service, db *pgxpool.Pool, events *channels.Eve
 
 			// Protocols
 			r.Route("/protocols", func(r chi.Router) {
-				r.Get("/", protocolHandler.List)
+				r.Get("/", systemHandler.ListProtocols)
 			})
 		})
 	})

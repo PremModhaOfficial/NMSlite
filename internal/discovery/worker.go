@@ -234,57 +234,33 @@ func (w *Worker) executeDiscovery(
 			return validatedCount, fmt.Errorf("discovery cancelled: %w", err)
 		}
 
-		// Try handshake with each matching plugin
-		validated := false
-		for _, plugin := range matchingPlugins {
-			var result *HandshakeResult
+		// Delegated validation logic
+		plugin, valid := w.validateTarget(ctx, targetIP, port, creds, handshakeTimeout, matchingPlugins, logger)
 
-			switch plugin.Manifest.Protocol {
-			case "ssh":
-				result, _ = ValidateSSH(targetIP, port, creds, handshakeTimeout)
-			case "winrm":
-				result, _ = ValidateWinRM(targetIP, port, creds, handshakeTimeout)
-			case "snmp-v2c":
-				result, _ = ValidateSNMPv2c(targetIP, port, creds, handshakeTimeout)
-			case "snmp-v3":
-				result, _ = ValidateSNMPv3(targetIP, port, creds, handshakeTimeout)
+		if valid {
+			logger.InfoContext(ctx, "Protocol handshake succeeded",
+				slog.String("ip", targetIP),
+				slog.Int("port", port),
+				slog.String("protocol", plugin.Manifest.Protocol),
+				slog.String("credential_id", credentialID.String()),
+			)
+
+			// Publish DeviceValidatedEvent - handler creates DB entries
+			select {
+			case w.events.DeviceValidated <- channels.DeviceValidatedEvent{
+				DiscoveryProfile:  profile,
+				CredentialProfile: credProfile,
+				Plugin:            plugin,
+				IP:                targetIP,
+				Port:              port,
+			}:
+				validatedCount++
+			case <-ctx.Done():
+				return validatedCount, ctx.Err()
 			default:
-				logger.WarnContext(ctx, "Unknown protocol, skipping handshake",
-					slog.String("protocol", plugin.Manifest.Protocol),
-				)
-				continue
+				logger.WarnContext(ctx, "DeviceValidated channel full, event dropped")
 			}
-
-			if result != nil && result.Success {
-				logger.InfoContext(ctx, "Protocol handshake succeeded",
-					slog.String("ip", targetIP),
-					slog.Int("port", port),
-					slog.String("protocol", plugin.Manifest.Protocol),
-					slog.String("credential_id", credentialID.String()),
-				)
-
-				// Publish DeviceValidatedEvent - handler creates DB entries
-				select {
-				case w.events.DeviceValidated <- channels.DeviceValidatedEvent{
-					DiscoveryProfile:  profile,
-					CredentialProfile: credProfile,
-					Plugin:            plugin,
-					IP:                targetIP,
-					Port:              port,
-				}:
-					validatedCount++
-					validated = true
-				case <-ctx.Done():
-					return validatedCount, ctx.Err()
-				default:
-					logger.WarnContext(ctx, "DeviceValidated channel full, event dropped")
-				}
-
-				break // First plugin success for this IP, move to next IP
-			}
-		}
-
-		if !validated {
+		} else {
 			logger.DebugContext(ctx, "No valid handshake for IP",
 				slog.String("ip", targetIP),
 				slog.Int("port", port),
@@ -293,6 +269,44 @@ func (w *Worker) executeDiscovery(
 	}
 
 	return validatedCount, nil
+}
+
+// validateTarget attempts to validate an IP against a list of plugins
+func (w *Worker) validateTarget(
+	ctx context.Context,
+	ip string,
+	port int,
+	creds *pluginManager.Credentials,
+	timeout time.Duration,
+	plugins []*pluginManager.PluginInfo,
+	logger *slog.Logger,
+) (*pluginManager.PluginInfo, bool) {
+
+	for _, plugin := range plugins {
+		var result *HandshakeResult
+
+		switch plugin.Manifest.Protocol {
+		case "ssh":
+			result, _ = ValidateSSH(ip, port, creds, timeout)
+		case "winrm":
+			result, _ = ValidateWinRM(ip, port, creds, timeout)
+		case "snmp-v2c":
+			result, _ = ValidateSNMPv2c(ip, port, creds, timeout)
+		case "snmp-v3":
+			result, _ = ValidateSNMPv3(ip, port, creds, timeout)
+		default:
+			logger.WarnContext(ctx, "Unknown protocol, skipping handshake",
+				slog.String("protocol", plugin.Manifest.Protocol),
+			)
+			continue
+		}
+
+		if result != nil && result.Success {
+			return plugin, true
+		}
+	}
+
+	return nil, false
 }
 
 // isPortOpen checks if a TCP port is open on the target
