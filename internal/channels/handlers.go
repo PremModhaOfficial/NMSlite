@@ -16,7 +16,7 @@ func StartDiscoveryCompletionLogger(ctx context.Context, events *EventChannels, 
 	go func() {
 		for {
 			select {
-			case event, ok := <-events.DiscoveryCompleted:
+			case event, ok := <-events.DiscoveryStatus:
 				if !ok {
 					return
 				}

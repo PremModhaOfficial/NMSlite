@@ -5,7 +5,6 @@ import (
 	"net/http"
 
 	"github.com/nmslite/nmslite/internal/auth"
-	"github.com/nmslite/nmslite/internal/middleware"
 )
 
 // AuthHandler handles authentication endpoints
@@ -45,30 +44,4 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 	// Send response
 	sendJSON(w, http.StatusOK, response)
-}
-
-// sendJSON sends a JSON response
-func sendJSON(w http.ResponseWriter, status int, data interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(data)
-}
-
-// sendError sends a standardized error response
-func sendError(w http.ResponseWriter, r *http.Request, status int, code, message string, details interface{}) {
-	requestID, _ := r.Context().Value(middleware.RequestIDKey).(string)
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-
-	response := middleware.ErrorResponse{
-		Error: middleware.ErrorDetail{
-			Code:      code,
-			Message:   message,
-			Details:   details,
-			RequestID: requestID,
-		},
-	}
-
-	json.NewEncoder(w).Encode(response)
 }

@@ -8,7 +8,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/nmslite/nmslite/internal/database/dbgen"
-	"github.com/nmslite/nmslite/internal/plugins"
+	"github.com/nmslite/nmslite/internal/globals"
+	"github.com/nmslite/nmslite/internal/pluginManager"
 )
 
 // DiscoveryRequestEvent is published when a discovery begins execution
@@ -17,8 +18,8 @@ type DiscoveryRequestEvent struct {
 	StartedAt time.Time
 }
 
-// DiscoveryCompletedEvent is published when a discovery finishes
-type DiscoveryCompletedEvent struct {
+// DiscoveryStatusEvent is published when a discovery finishes
+type DiscoveryStatusEvent struct {
 	ProfileID    uuid.UUID
 	Status       string // "success", "partial", "failed"
 	DevicesFound int
@@ -30,7 +31,7 @@ type DiscoveryCompletedEvent struct {
 type DeviceValidatedEvent struct {
 	DiscoveryProfile  dbgen.DiscoveryProfile
 	CredentialProfile dbgen.CredentialProfile
-	Plugin            *plugins.PluginInfo
+	Plugin            *pluginManager.PluginInfo
 	IP                string
 	Port              int
 }
@@ -61,12 +62,20 @@ type CacheInvalidateEvent struct {
 	Timestamp  time.Time
 }
 
+// EventChannelsConfig configures buffer sizes for event channels
+type EventChannelsConfig struct {
+	DiscoveryBufferSize    int
+	MonitorStateBufferSize int
+	PluginBufferSize       int
+	CacheBufferSize        int
+}
+
 // EventChannels provides typed channels for all system events
 type EventChannels struct {
 	// Discovery events
-	DiscoveryRequest   chan DiscoveryRequestEvent
-	DiscoveryCompleted chan DiscoveryCompletedEvent
-	DeviceValidated    chan DeviceValidatedEvent
+	DiscoveryRequest chan DiscoveryRequestEvent
+	DiscoveryStatus  chan DiscoveryStatusEvent
+	DeviceValidated  chan DeviceValidatedEvent
 
 	// Monitor state events
 	MonitorState chan MonitorStateEvent
@@ -82,15 +91,22 @@ type EventChannels struct {
 }
 
 // NewEventChannels creates a new EventChannels hub with configured buffer sizes
-func NewEventChannels(ctx context.Context, cfg EventChannelsConfig) *EventChannels {
+func NewEventChannels(ctx context.Context) *EventChannels {
+	cfg := globals.GetConfig().Channel
+
+	discoverySize := cfg.DiscoveryEventsChannelSize
+	if discoverySize <= 0 {
+		discoverySize = 50
+	}
+
 	return &EventChannels{
-		DiscoveryRequest:   make(chan DiscoveryRequestEvent, cfg.DiscoveryBufferSize),
-		DiscoveryCompleted: make(chan DiscoveryCompletedEvent, cfg.DiscoveryBufferSize),
-		DeviceValidated:    make(chan DeviceValidatedEvent, cfg.DiscoveryBufferSize),
-		MonitorState:       make(chan MonitorStateEvent, cfg.MonitorStateBufferSize),
-		PluginEvent:        make(chan PluginEvent, cfg.PluginBufferSize),
-		CacheInvalidate:    make(chan CacheInvalidateEvent, cfg.CacheBufferSize),
-		done:               make(chan struct{}),
+		DiscoveryRequest: make(chan DiscoveryRequestEvent, discoverySize),
+		DiscoveryStatus:  make(chan DiscoveryStatusEvent, discoverySize),
+		DeviceValidated:  make(chan DeviceValidatedEvent, discoverySize),
+		MonitorState:     make(chan MonitorStateEvent, cfg.StateSignalChannelSize),
+		PluginEvent:      make(chan PluginEvent, 100), // Hardcoded default
+		CacheInvalidate:  make(chan CacheInvalidateEvent, cfg.CacheEventsChannelSize),
+		done:             make(chan struct{}),
 	}
 }
 
@@ -100,7 +116,7 @@ func (ec *EventChannels) Close() error {
 
 	// Close all channels to signal consumers to exit
 	close(ec.DiscoveryRequest)
-	close(ec.DiscoveryCompleted)
+	close(ec.DiscoveryStatus)
 	close(ec.DeviceValidated)
 	close(ec.MonitorState)
 	close(ec.PluginEvent)

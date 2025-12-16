@@ -556,10 +556,10 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"name\": \"Network Scan\",\n    \"target_value\": \"192.168.1.0/24\",\n    \"ports\": [22, 161, 443, 5985],\n    \"port_scan_timeout_ms\": 5000,\n    \"credential_profile_ids\": [\"{{credential_id}}\"]\n}"
+							"raw": "{\n    \"name\": \"Network Scan - SSH\",\n    \"target_value\": \"192.168.1.0/24\",\n    \"port\": 22,\n    \"port_scan_timeout_ms\": 5000,\n    \"credential_profile_id\": \"{{credential_id}}\",\n    \"auto_provision\": true,\n    \"auto_run\": true\n}"
 						},
 						"url": "{{base_url}}/api/v1/discoveries",
-						"description": "Create a new discovery profile using CIDR notation. Target type is auto-detected from the format (contains '/' = CIDR)."
+						"description": "Create a new discovery profile using CIDR notation for SSH (port 22). Set auto_run to true to trigger discovery immediately after creation. Each profile now targets a single port and uses a single credential. To scan multiple ports, create separate profiles."
 					},
 					"response": [],
 					"event": [
@@ -608,10 +608,10 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"name\": \"Datacenter IP Range Scan\",\n    \"target_value\": \"192.168.1.1-192.168.1.50\",\n    \"ports\": [22, 161, 5985],\n    \"port_scan_timeout_ms\": 3000,\n    \"credential_profile_ids\": [\"{{credential_id}}\"]\n}"
+							"raw": "{\n    \"name\": \"Datacenter IP Range - WinRM\",\n    \"target_value\": \"192.168.1.1-192.168.1.50\",\n    \"port\": 5985,\n    \"port_scan_timeout_ms\": 3000,\n    \"credential_profile_id\": \"{{credential_id}}\",\n    \"auto_provision\": true,\n    \"auto_run\": false\n}"
 						},
 						"url": "{{base_url}}/api/v1/discoveries",
-						"description": "Create a new discovery profile using IP range. Target type is auto-detected from the format (contains '-' = Range)."
+						"description": "Create a new discovery profile using IP range for WinRM (port 5985). Each profile now targets a single port and uses a single credential."
 					},
 					"response": [],
 					"event": [
@@ -650,10 +650,10 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"name\": \"Single Server Discovery\",\n    \"target_value\": \"192.168.1.100\",\n    \"ports\": [22, 5985],\n    \"port_scan_timeout_ms\": 5000,\n    \"credential_profile_ids\": [\"{{credential_id}}\"]\n}"
+							"raw": "{\n    \"name\": \"Single Server - SSH\",\n    \"target_value\": \"192.168.1.100\",\n    \"port\": 22,\n    \"port_scan_timeout_ms\": 5000,\n    \"credential_profile_id\": \"{{credential_id}}\",\n    \"auto_provision\": false,\n    \"auto_run\": true\n}"
 						},
 						"url": "{{base_url}}/api/v1/discoveries",
-						"description": "Create a new discovery profile for a single IP address. Target type is auto-detected from the format (valid IP = Single IP)."
+						"description": "Create a new discovery profile for a single IP address on SSH port. Each profile now targets a single port and uses a single credential."
 					},
 					"response": [],
 					"event": [
@@ -730,10 +730,10 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"name\": \"Updated Network Scan\",\n    \"target_value\": \"192.168.1.0/25\",\n    \"ports\": [22, 5985],\n    \"port_scan_timeout_ms\": 3000,\n    \"credential_profile_ids\": [\"{{credential_id}}\"]\n}"
+							"raw": "{\n    \"name\": \"Updated Network Scan - SSH\",\n    \"target_value\": \"192.168.1.0/25\",\n    \"port\": 22,\n    \"port_scan_timeout_ms\": 3000,\n    \"credential_profile_id\": \"{{credential_id}}\",\n    \"auto_provision\": true,\n    \"auto_run\": false\n}"
 						},
 						"url": "{{base_url}}/api/v1/discoveries/{{discovery_id}}",
-						"description": "Update an existing discovery profile. Target type is auto-detected from the target_value format."
+						"description": "Update an existing discovery profile. Uses single port and credential_profile_id."
 					},
 					"response": [],
 					"event": [

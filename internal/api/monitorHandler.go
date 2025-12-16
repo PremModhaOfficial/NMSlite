@@ -3,16 +3,12 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"log/slog"
 	"net/http"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nmslite/nmslite/internal/channels"
 	"github.com/nmslite/nmslite/internal/database"
 	"github.com/nmslite/nmslite/internal/database/dbgen"
@@ -20,16 +16,14 @@ import (
 
 // MonitorHandler handles monitor (device) endpoints
 type MonitorHandler struct {
-	pool   *pgxpool.Pool
 	q      dbgen.Querier
 	events *channels.EventChannels
 }
 
 // NewMonitorHandler creates a new monitor handler
-func NewMonitorHandler(pool *pgxpool.Pool, events *channels.EventChannels) *MonitorHandler {
+func NewMonitorHandler(q dbgen.Querier, events *channels.EventChannels) *MonitorHandler {
 	return &MonitorHandler{
-		pool:   pool,
-		q:      dbgen.New(pool),
+		q:      q,
 		events: events,
 	}
 }
@@ -37,8 +31,7 @@ func NewMonitorHandler(pool *pgxpool.Pool, events *channels.EventChannels) *Moni
 // List handles GET /api/v1/monitors
 func (h *MonitorHandler) List(w http.ResponseWriter, r *http.Request) {
 	monitors, err := h.q.ListMonitors(r.Context())
-	if err != nil {
-		sendError(w, r, http.StatusInternalServerError, "DB_ERROR", "Failed to list monitors", err)
+	if handleDBError(w, r, err, "Monitor") {
 		return
 	}
 
@@ -149,20 +142,13 @@ func (h *MonitorHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 // Get handles GET /api/v1/monitors/{id}
 func (h *MonitorHandler) Get(w http.ResponseWriter, r *http.Request) {
-	idStr := chi.URLParam(r, "id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		sendError(w, r, http.StatusBadRequest, "INVALID_ID", "Invalid UUID format", err)
+	id, ok := parseUUIDParam(w, r, "id")
+	if !ok {
 		return
 	}
 
 	monitor, err := h.q.GetMonitor(r.Context(), id)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			sendError(w, r, http.StatusNotFound, "NOT_FOUND", "Monitor not found", nil)
-			return
-		}
-		sendError(w, r, http.StatusInternalServerError, "DB_ERROR", "Failed to get monitor", err)
+	if handleDBError(w, r, err, "Monitor") {
 		return
 	}
 
@@ -171,10 +157,8 @@ func (h *MonitorHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 // Update handles PATCH /api/v1/monitors/{id}
 func (h *MonitorHandler) Update(w http.ResponseWriter, r *http.Request) {
-	idStr := chi.URLParam(r, "id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		sendError(w, r, http.StatusBadRequest, "INVALID_ID", "Invalid UUID format", err)
+	id, ok := parseUUIDParam(w, r, "id")
+	if !ok {
 		return
 	}
 
@@ -196,12 +180,7 @@ func (h *MonitorHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	// Get existing to merge
 	existing, err := h.q.GetMonitor(r.Context(), id)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			sendError(w, r, http.StatusNotFound, "NOT_FOUND", "Monitor not found", nil)
-			return
-		}
-		sendError(w, r, http.StatusInternalServerError, "DB_ERROR", "Failed to fetch existing monitor", err)
+	if handleDBError(w, r, err, "Monitor") {
 		return
 	}
 
@@ -273,16 +252,13 @@ func (h *MonitorHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 // Delete handles DELETE /api/v1/monitors/{id}
 func (h *MonitorHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	idStr := chi.URLParam(r, "id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		sendError(w, r, http.StatusBadRequest, "INVALID_ID", "Invalid UUID format", err)
+	id, ok := parseUUIDParam(w, r, "id")
+	if !ok {
 		return
 	}
 
-	err = h.q.DeleteMonitor(r.Context(), id)
-	if err != nil {
-		sendError(w, r, http.StatusInternalServerError, "DB_ERROR", "Failed to delete monitor", err)
+	err := h.q.DeleteMonitor(r.Context(), id)
+	if handleDBError(w, r, err, "Monitor") {
 		return
 	}
 
@@ -329,13 +305,13 @@ func (h *MonitorHandler) QueryMetrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// If no valid devices, return empty result with all requested IDs showing empty arrays
+	// If no valid devices, return empty result with all requested IDs showing empty maps
 	if len(validDeviceIDs) == 0 {
-		emptyData := make(map[string][]MetricRow)
+		emptyData := make(map[string]map[string]float64)
 		for _, id := range req.DeviceIDs {
-			emptyData[id.String()] = []MetricRow{}
+			emptyData[id.String()] = make(map[string]float64)
 		}
-		response := &BatchMetricsQueryResponse{
+		response := &MetricsQueryResponse{
 			Data:  emptyData,
 			Count: 0,
 		}
@@ -344,7 +320,7 @@ func (h *MonitorHandler) QueryMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Execute query with valid device IDs
-	response, err := ExecuteMetricsQuery(r.Context(), h.pool, validDeviceIDs, req)
+	response, err := ExecuteMetricsQuery(r.Context(), h.q, validDeviceIDs, req)
 	if err != nil {
 		sendError(w, r, http.StatusInternalServerError, "QUERY_ERROR", "Failed to query metrics", err)
 		return

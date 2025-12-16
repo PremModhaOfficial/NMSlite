@@ -34,28 +34,29 @@ type DiscoveredDevice struct {
 }
 
 type DiscoveryProfile struct {
-	ID                   uuid.UUID          `json:"id"`
-	Name                 string             `json:"name"`
-	TargetValue          string             `json:"target_value"`
-	Ports                json.RawMessage    `json:"ports"`
-	PortScanTimeoutMs    pgtype.Int4        `json:"port_scan_timeout_ms"`
-	CredentialProfileIds json.RawMessage    `json:"credential_profile_ids"`
-	LastRunAt            pgtype.Timestamptz `json:"last_run_at"`
-	LastRunStatus        pgtype.Text        `json:"last_run_status"`
-	DevicesDiscovered    pgtype.Int4        `json:"devices_discovered"`
-	CreatedAt            pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
-	DeletedAt            pgtype.Timestamptz `json:"deleted_at"`
-	AutoProvision        pgtype.Bool        `json:"auto_provision"`
+	ID                  uuid.UUID          `json:"id"`
+	Name                string             `json:"name"`
+	TargetValue         string             `json:"target_value"`
+	Port                int32              `json:"port"`
+	PortScanTimeoutMs   pgtype.Int4        `json:"port_scan_timeout_ms"`
+	CredentialProfileID uuid.UUID          `json:"credential_profile_id"`
+	LastRunAt           pgtype.Timestamptz `json:"last_run_at"`
+	LastRunStatus       pgtype.Text        `json:"last_run_status"`
+	DevicesDiscovered   pgtype.Int4        `json:"devices_discovered"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt           pgtype.Timestamptz `json:"deleted_at"`
+	AutoProvision       pgtype.Bool        `json:"auto_provision"`
+	// If true, discovery will run automatically on a schedule
+	AutoRun pgtype.Bool `json:"auto_run"`
 }
 
 type Metric struct {
-	Timestamp   pgtype.Timestamptz `json:"timestamp"`
-	MetricGroup string             `json:"metric_group"`
-	DeviceID    uuid.UUID          `json:"device_id"`
-	Tags        json.RawMessage    `json:"tags"`
-	ValUsed     pgtype.Float8      `json:"val_used"`
-	ValTotal    pgtype.Float8      `json:"val_total"`
+	Timestamp pgtype.Timestamptz `json:"timestamp"`
+	DeviceID  uuid.UUID          `json:"device_id"`
+	Name      string             `json:"name"`
+	Value     float64            `json:"value"`
+	Type      pgtype.Text        `json:"type"`
 }
 
 type Monitor struct {

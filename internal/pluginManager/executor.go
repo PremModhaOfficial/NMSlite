@@ -1,4 +1,4 @@
-package plugins
+package pluginManager
 
 import (
 	"bytes"
@@ -19,11 +19,11 @@ type Executor struct {
 }
 
 // NewExecutor creates a new plugin executor
-func NewExecutor(registry *Registry, timeout time.Duration, logger *slog.Logger) *Executor {
+func NewExecutor(registry *Registry, timeout time.Duration) *Executor {
 	return &Executor{
 		registry: registry,
 		timeout:  timeout,
-		logger:   logger,
+		logger:   slog.Default().With("component", "plugin_executor"),
 	}
 }
 

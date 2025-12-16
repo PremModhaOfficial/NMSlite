@@ -5,9 +5,9 @@ ORDER BY created_at DESC;
 
 -- name: CreateDiscoveryProfile :one
 INSERT INTO discovery_profiles (
-    name, target_value, ports, port_scan_timeout_ms, credential_profile_ids, auto_provision
+    name, target_value, port, port_scan_timeout_ms, credential_profile_id, auto_provision, auto_run
 ) VALUES (
-    $1, $2, $3, $4, $5, $6
+    $1, $2, $3, $4, $5, $6, $7
 )
 RETURNING *;
 
@@ -20,10 +20,11 @@ UPDATE discovery_profiles
 SET 
     name = $2,
     target_value = $3,
-    ports = $4,
+    port = $4,
     port_scan_timeout_ms = $5,
-    credential_profile_ids = $6,
+    credential_profile_id = $6,
     auto_provision = $7,
+    auto_run = $8,
     updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL
 RETURNING *;

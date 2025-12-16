@@ -8,11 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nmslite/nmslite/internal/auth"
 	"github.com/nmslite/nmslite/internal/channels"
 	"github.com/nmslite/nmslite/internal/database/dbgen"
@@ -21,7 +17,6 @@ import (
 
 // CredentialHandler handles credential profile endpoints
 type CredentialHandler struct {
-	pool        *pgxpool.Pool
 	q           dbgen.Querier
 	authService *auth.Service
 	registry    *protocols.Registry
@@ -29,10 +24,9 @@ type CredentialHandler struct {
 }
 
 // NewCredentialHandler creates a new credential handler
-func NewCredentialHandler(pool *pgxpool.Pool, authService *auth.Service, events *channels.EventChannels) *CredentialHandler {
+func NewCredentialHandler(q dbgen.Querier, authService *auth.Service, events *channels.EventChannels) *CredentialHandler {
 	return &CredentialHandler{
-		pool:        pool,
-		q:           dbgen.New(pool),
+		q:           q,
 		authService: authService,
 		registry:    protocols.GetRegistry(),
 		events:      events,
@@ -42,8 +36,7 @@ func NewCredentialHandler(pool *pgxpool.Pool, authService *auth.Service, events 
 // List handles GET /api/v1/credentials
 func (h *CredentialHandler) List(w http.ResponseWriter, r *http.Request) {
 	profiles, err := h.q.ListCredentialProfiles(r.Context())
-	if err != nil {
-		sendError(w, r, http.StatusInternalServerError, "DB_ERROR", "Failed to list credentials", err)
+	if handleDBError(w, r, err, "Credential profiles") {
 		return
 	}
 
@@ -133,20 +126,13 @@ func (h *CredentialHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 // Get handles GET /api/v1/credentials/{id}
 func (h *CredentialHandler) Get(w http.ResponseWriter, r *http.Request) {
-	idStr := chi.URLParam(r, "id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		sendError(w, r, http.StatusBadRequest, "INVALID_ID", "Invalid UUID format", err)
+	id, ok := parseUUIDParam(w, r, "id")
+	if !ok {
 		return
 	}
 
 	profile, err := h.q.GetCredentialProfile(r.Context(), id)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			sendError(w, r, http.StatusNotFound, "NOT_FOUND", "Credential profile not found", nil)
-			return
-		}
-		sendError(w, r, http.StatusInternalServerError, "DB_ERROR", "Failed to get credential profile", err)
+	if handleDBError(w, r, err, "Credential profile") {
 		return
 	}
 
@@ -163,10 +149,8 @@ func (h *CredentialHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 // Update handles PUT /api/v1/credentials/{id}
 func (h *CredentialHandler) Update(w http.ResponseWriter, r *http.Request) {
-	idStr := chi.URLParam(r, "id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		sendError(w, r, http.StatusBadRequest, "INVALID_ID", "Invalid UUID format", err)
+	id, ok := parseUUIDParam(w, r, "id")
+	if !ok {
 		return
 	}
 
@@ -222,12 +206,7 @@ func (h *CredentialHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	profile, err := h.q.UpdateCredentialProfile(r.Context(), params)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			sendError(w, r, http.StatusNotFound, "NOT_FOUND", "Credential profile not found", nil)
-			return
-		}
-		sendError(w, r, http.StatusInternalServerError, "DB_ERROR", "Failed to update credential profile", err)
+	if handleDBError(w, r, err, "Credential profile") {
 		return
 	}
 
@@ -247,16 +226,13 @@ func (h *CredentialHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 // Delete handles DELETE /api/v1/credentials/{id}
 func (h *CredentialHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	idStr := chi.URLParam(r, "id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		sendError(w, r, http.StatusBadRequest, "INVALID_ID", "Invalid UUID format", err)
+	id, ok := parseUUIDParam(w, r, "id")
+	if !ok {
 		return
 	}
 
-	err = h.q.DeleteCredentialProfile(r.Context(), id)
-	if err != nil {
-		sendError(w, r, http.StatusInternalServerError, "DB_ERROR", "Failed to delete credential profile", err)
+	err := h.q.DeleteCredentialProfile(r.Context(), id)
+	if handleDBError(w, r, err, "Credential profile") {
 		return
 	}
 

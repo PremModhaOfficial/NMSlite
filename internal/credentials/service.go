@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/nmslite/nmslite/internal/auth"
 	"github.com/nmslite/nmslite/internal/database/dbgen"
-	"github.com/nmslite/nmslite/internal/plugins"
+	"github.com/nmslite/nmslite/internal/pluginManager"
 )
 
 // Service handles credential operations
@@ -26,7 +26,7 @@ func NewService(authService *auth.Service, querier dbgen.Querier) *Service {
 }
 
 // GetDecrypted fetches and decrypts a credential profile
-func (s *Service) GetDecrypted(ctx context.Context, profileID uuid.UUID) (*plugins.Credentials, error) {
+func (s *Service) GetDecrypted(ctx context.Context, profileID uuid.UUID) (*pluginManager.Credentials, error) {
 	// Fetch credential profile
 	profile, err := s.querier.GetCredentialProfile(ctx, profileID)
 	if err != nil {
@@ -38,7 +38,7 @@ func (s *Service) GetDecrypted(ctx context.Context, profileID uuid.UUID) (*plugi
 }
 
 // DecryptContainer decrypts the raw credential_data JSON blob (which contains an encrypted string)
-func (s *Service) DecryptContainer(container []byte) (*plugins.Credentials, error) {
+func (s *Service) DecryptContainer(container []byte) (*pluginManager.Credentials, error) {
 	// Decrypt credential_data (expecting a JSON string containing the encrypted payload)
 	var encryptedStr string
 	if err := json.Unmarshal(container, &encryptedStr); err != nil {
@@ -58,7 +58,7 @@ func (s *Service) DecryptContainer(container []byte) (*plugins.Credentials, erro
 	}
 
 	// Build Credentials struct
-	creds := &plugins.Credentials{}
+	creds := &pluginManager.Credentials{}
 
 	if username, ok := credMap["username"].(string); ok {
 		creds.Username = username

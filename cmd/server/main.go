@@ -17,12 +17,12 @@ import (
 	"github.com/nmslite/nmslite/internal/api"
 	"github.com/nmslite/nmslite/internal/auth"
 	"github.com/nmslite/nmslite/internal/channels"
-	"github.com/nmslite/nmslite/internal/config"
 	"github.com/nmslite/nmslite/internal/credentials"
 	"github.com/nmslite/nmslite/internal/database"
 	"github.com/nmslite/nmslite/internal/database/dbgen"
 	"github.com/nmslite/nmslite/internal/discovery"
-	"github.com/nmslite/nmslite/internal/plugins"
+	"github.com/nmslite/nmslite/internal/globals"
+	"github.com/nmslite/nmslite/internal/pluginManager"
 	"github.com/nmslite/nmslite/internal/poller"
 )
 
@@ -33,15 +33,15 @@ func main() {
 
 	// Handle dump-config flag
 	if *dumpConfig {
-		if err := config.DumpExampleConfig(os.Stdout); err != nil {
+		if err := globals.DumpExampleConfig(os.Stdout); err != nil {
 			log.Fatalf("Failed to dump example config: %v", err)
 		}
 		os.Exit(0)
 	}
 
 	// Load configuration and logger
-	cfg := loadConfig()
-	logger := initLogger(cfg.Logging)
+	cfg := globals.InitGlobal() // Initialize global config singleton
+	logger := initLogger()
 	logger.Info("Starting NMS Lite Server",
 		"version", "1.0.0",
 		"host", cfg.Server.Host,
@@ -53,24 +53,24 @@ func main() {
 	defer cancel()
 
 	// Initialize database with single pool
-	pool := initDatabase(ctx, cfg, logger)
+	pool := initDatabase(ctx)
 	defer database.Close()
 
-	authService := initAuthService(cfg)
-	events := initEventChannels(ctx, cfg, logger)
+	authService := initAuthService()
+	events := initEventChannels(ctx)
 	defer events.Close()
 
 	// Initialize BatchWriter for metrics
-	batchWriter := initBatchWriter(ctx, pool, cfg, logger)
+	batchWriter := initBatchWriter(ctx, pool)
 
 	// Initialize and start workers
-	pluginRegistry, pluginExecutor, credService := startDiscoveryWorker(ctx, cfg, pool, events, authService, logger)
-	startScheduler(ctx, cfg, pool, pluginExecutor, pluginRegistry, credService, events, batchWriter, logger)
+	pluginRegistry, pluginExecutor, credService := startDiscoveryWorker(ctx, pool, events, authService)
+	startScheduler(ctx, pool, pluginExecutor, pluginRegistry, credService, events, batchWriter)
 	channels.StartProvisionHandler(ctx, events, dbgen.New(pool), logger)
 
 	// Start HTTP server
-	srv := initHTTPServer(cfg, authService, logger, pool, events)
-	go startServer(srv, logger, cfg)
+	srv := initHTTPServer(authService, pool, events)
+	go startServer(srv)
 
 	// Wait for shutdown signal
 	quit := make(chan os.Signal, 1)
@@ -78,36 +78,29 @@ func main() {
 	<-quit
 
 	// Graceful shutdown
-	shutdownServer(cancel, srv, logger)
+	shutdownServer(cancel, srv)
 }
 
-func loadConfig() *config.Config {
-	cfg, err := config.Load("config.yaml")
-	if err != nil {
-		log.Fatalf("Failed to load configuration: %v", err)
-	}
-	return cfg
-}
-
-func initDatabase(ctx context.Context, cfg *config.Config, logger *slog.Logger) *pgxpool.Pool {
-	if err := database.InitDB(ctx, cfg); err != nil {
+func initDatabase(ctx context.Context) *pgxpool.Pool {
+	if err := database.InitDB(ctx); err != nil {
 		log.Fatalf("DB init failed: %v", err)
 	}
 
-	if err := database.RunMigrations(ctx, cfg); err != nil {
+	if err := database.RunMigrations(ctx); err != nil {
 		log.Fatalf("Migrations failed: %v", err)
 	}
 
 	pool := database.GetPool()
 
-	logger.Info("Database pool initialized",
-		"max_conns", cfg.Database.Pool.MaxConns,
+	slog.Info("Database pool initialized",
+		"max_conns", globals.GetConfig().Database.Pool.MaxConns,
 	)
 
 	return pool
 }
 
-func initAuthService(cfg *config.Config) *auth.Service {
+func initAuthService() *auth.Service {
+	cfg := globals.GetConfig()
 	authService, err := auth.NewService(
 		cfg.Auth.JWTSecret,
 		cfg.Auth.EncryptionKey,
@@ -121,52 +114,53 @@ func initAuthService(cfg *config.Config) *auth.Service {
 	return authService
 }
 
-func initEventChannels(ctx context.Context, cfg *config.Config, logger *slog.Logger) *channels.EventChannels {
+func initEventChannels(ctx context.Context) *channels.EventChannels {
+	// Refactored to use config.Get() internally in NewEventChannels
+	events := channels.NewEventChannels(ctx)
+
+	// Log what was configured (need to access config solely for logging)
+	cfg := globals.GetConfig()
 	eventBusSize := cfg.Channel.DiscoveryEventsChannelSize
 	if eventBusSize <= 0 {
 		eventBusSize = 50
 	}
 
-	channelsCfg := channels.EventChannelsConfig{
-		DiscoveryBufferSize:    eventBusSize,
-		MonitorStateBufferSize: cfg.Channel.StateSignalChannelSize,
-		PluginBufferSize:       100,
-		CacheBufferSize:        cfg.Channel.CacheEventsChannelSize,
-	}
-
-	events := channels.NewEventChannels(ctx, channelsCfg)
-	logger.Info("EventChannels initialized",
-		"discovery_buffer", channelsCfg.DiscoveryBufferSize,
-		"monitor_state_buffer", channelsCfg.MonitorStateBufferSize,
+	slog.Info("EventChannels initialized",
+		"discovery_buffer", eventBusSize,
+		"monitor_state_buffer", cfg.Channel.StateSignalChannelSize,
 	)
 
-	channels.StartDiscoveryCompletionLogger(ctx, events, logger)
+	channels.StartDiscoveryCompletionLogger(ctx, events, slog.Default())
 	return events
 }
 
-func initBatchWriter(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config, logger *slog.Logger) *poller.BatchWriter {
-	batchWriter := poller.NewBatchWriter(pool, &cfg.Metrics, logger)
+func initBatchWriter(ctx context.Context, pool *pgxpool.Pool) *poller.BatchWriter {
+	batchWriter := poller.NewBatchWriter(pool)
 
 	go func() {
 		if err := batchWriter.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
-			logger.Error("BatchWriter error", "error", err)
+			slog.Error("BatchWriter error", "error", err)
 		}
 	}()
 
-	logger.Info("BatchWriter started",
-		"batch_size", cfg.Metrics.BatchSize,
-		"flush_interval_ms", cfg.Metrics.FlushIntervalMS,
-		"max_buffer_size", cfg.Metrics.MaxBufferSize,
+	cfg := globals.GetConfig().Metrics
+	slog.Info("BatchWriter started",
+		"batch_size", cfg.BatchSize,
+		"flush_interval_ms", cfg.FlushIntervalMS,
+		"max_buffer_size", cfg.MaxBufferSize,
 	)
 
 	return batchWriter
 }
 
-func startDiscoveryWorker(ctx context.Context, cfg *config.Config, db *pgxpool.Pool, events *channels.EventChannels, authService *auth.Service, logger *slog.Logger) (*plugins.Registry, *plugins.Executor, *credentials.Service) {
+func startDiscoveryWorker(ctx context.Context, db *pgxpool.Pool, events *channels.EventChannels, authService *auth.Service) (*pluginManager.Registry, *pluginManager.Executor, *credentials.Service) {
+	cfg := globals.GetConfig()
+	logger := slog.Default()
+
 	// Initialize Plugin Registry
-	pluginRegistry := plugins.NewRegistry(cfg.Plugins.Directory, logger)
+	pluginRegistry := pluginManager.NewRegistry(cfg.Plugins.Directory)
 	if err := pluginRegistry.Scan(); err != nil {
-		logger.Error("Failed to scan plugins", "error", err)
+		logger.Error("Failed to scan pluginManager", "error", err)
 	} else {
 		pluginList := pluginRegistry.List()
 		logger.Info("Plugins loaded", "count", len(pluginList))
@@ -181,10 +175,9 @@ func startDiscoveryWorker(ctx context.Context, cfg *config.Config, db *pgxpool.P
 	}
 
 	// Initialize Plugin Executor
-	pluginExecutor := plugins.NewExecutor(
+	pluginExecutor := pluginManager.NewExecutor(
 		pluginRegistry,
 		time.Duration(cfg.Poller.PluginTimeoutMS)*time.Millisecond,
-		logger,
 	)
 
 	// Initialize services
@@ -211,16 +204,14 @@ func startDiscoveryWorker(ctx context.Context, cfg *config.Config, db *pgxpool.P
 
 func startScheduler(
 	ctx context.Context,
-	cfg *config.Config,
 	db *pgxpool.Pool,
-	pluginExecutor *plugins.Executor,
-	pluginRegistry *plugins.Registry,
+	pluginExecutor *pluginManager.Executor,
+	pluginRegistry *pluginManager.Registry,
 	credService *credentials.Service,
 	events *channels.EventChannels,
 	batchWriter *poller.BatchWriter,
-	logger *slog.Logger,
 ) {
-	resultWriter := poller.NewResultWriter(logger, batchWriter)
+	resultWriter := poller.NewResultWriter(batchWriter)
 
 	scheduler := poller.NewSchedulerImpl(
 		dbgen.New(db), // Wrap pool with sqlc querier - pool is still shared
@@ -229,25 +220,25 @@ func startScheduler(
 		pluginRegistry,
 		credService,
 		resultWriter,
-		logger,
-		cfg.Scheduler,
 	)
 
 	go func() {
 		if err := scheduler.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
-			logger.Error("Scheduler error", "error", err)
+			slog.Error("Scheduler error", "error", err)
 		}
 	}()
 
-	logger.Info("Scheduler started",
-		"tick_interval_ms", cfg.Scheduler.TickIntervalMS,
-		"liveness_workers", cfg.Scheduler.LivenessWorkers,
-		"plugin_workers", cfg.Scheduler.PluginWorkers,
+	cfg := globals.GetConfig().Scheduler
+	slog.Info("Scheduler started",
+		"tick_interval_ms", cfg.TickIntervalMS,
+		"liveness_workers", cfg.LivenessWorkers,
+		"plugin_workers", cfg.PluginWorkers,
 	)
 }
 
-func initHTTPServer(cfg *config.Config, authService *auth.Service, logger *slog.Logger, db *pgxpool.Pool, events *channels.EventChannels) *http.Server {
-	router := api.NewRouter(cfg, authService, logger, db, events)
+func initHTTPServer(authService *auth.Service, db *pgxpool.Pool, events *channels.EventChannels) *http.Server {
+	cfg := globals.GetConfig()
+	router := api.NewRouter(authService, db, events)
 	return &http.Server{
 		Addr:         fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
 		Handler:      router,
@@ -256,64 +247,37 @@ func initHTTPServer(cfg *config.Config, authService *auth.Service, logger *slog.
 	}
 }
 
-func startServer(srv *http.Server, logger *slog.Logger, cfg *config.Config) {
+func startServer(srv *http.Server) {
+	cfg := globals.GetConfig()
 	if cfg.TLS.Enabled {
-		logger.Info("HTTPS server listening", "addr", srv.Addr)
+		slog.Info("HTTPS server listening", "addr", srv.Addr)
 		if err := srv.ListenAndServeTLS(cfg.TLS.CertFile, cfg.TLS.KeyFile); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logger.Error("HTTPS server failed", "error", err)
+			slog.Error("HTTPS server failed", "error", err)
 			os.Exit(1)
 		}
 	} else {
-		logger.Info("HTTP server listening", "addr", srv.Addr)
+		slog.Info("HTTP server listening", "addr", srv.Addr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logger.Error("HTTP server failed", "error", err)
+			slog.Error("HTTP server failed", "error", err)
 			os.Exit(1)
 		}
 	}
 }
 
-func shutdownServer(cancel context.CancelFunc, srv *http.Server, logger *slog.Logger) {
-	logger.Info("Shutting down server...")
+func shutdownServer(cancel context.CancelFunc, srv *http.Server) {
+	slog.Info("Shutting down server...")
 	cancel()
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		logger.Error("Server forced to shutdown", "error", err)
+		slog.Error("Server forced to shutdown", "error", err)
 	}
 
-	logger.Info("Server stopped gracefully")
+	slog.Info("Server stopped gracefully")
 }
 
-func initLogger(cfg config.LoggingConfig) *slog.Logger {
-	var handler slog.Handler
-
-	// Set log level
-	var level slog.Level
-	switch cfg.Level {
-	case "debug":
-		level = slog.LevelDebug
-	case "info":
-		level = slog.LevelInfo
-	case "warn":
-		level = slog.LevelWarn
-	case "error":
-		level = slog.LevelError
-	default:
-		level = slog.LevelInfo
-	}
-
-	opts := &slog.HandlerOptions{
-		Level: level,
-	}
-
-	// Set format
-	if cfg.Format == "json" {
-		handler = slog.NewJSONHandler(os.Stdout, opts)
-	} else {
-		handler = slog.NewTextHandler(os.Stdout, opts)
-	}
-
-	return slog.New(handler)
+func initLogger() *slog.Logger {
+	return globals.InitLogger(globals.GetConfig().Logging)
 }

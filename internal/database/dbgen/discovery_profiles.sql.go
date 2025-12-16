@@ -7,7 +7,6 @@ package dbgen
 
 import (
 	"context"
-	"encoding/json"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -15,39 +14,41 @@ import (
 
 const createDiscoveryProfile = `-- name: CreateDiscoveryProfile :one
 INSERT INTO discovery_profiles (
-    name, target_value, ports, port_scan_timeout_ms, credential_profile_ids, auto_provision
+    name, target_value, port, port_scan_timeout_ms, credential_profile_id, auto_provision, auto_run
 ) VALUES (
-    $1, $2, $3, $4, $5, $6
+    $1, $2, $3, $4, $5, $6, $7
 )
-RETURNING id, name, target_value, ports, port_scan_timeout_ms, credential_profile_ids, last_run_at, last_run_status, devices_discovered, created_at, updated_at, deleted_at, auto_provision
+RETURNING id, name, target_value, port, port_scan_timeout_ms, credential_profile_id, last_run_at, last_run_status, devices_discovered, created_at, updated_at, deleted_at, auto_provision, auto_run
 `
 
 type CreateDiscoveryProfileParams struct {
-	Name                 string          `json:"name"`
-	TargetValue          string          `json:"target_value"`
-	Ports                json.RawMessage `json:"ports"`
-	PortScanTimeoutMs    pgtype.Int4     `json:"port_scan_timeout_ms"`
-	CredentialProfileIds json.RawMessage `json:"credential_profile_ids"`
-	AutoProvision        pgtype.Bool     `json:"auto_provision"`
+	Name                string      `json:"name"`
+	TargetValue         string      `json:"target_value"`
+	Port                int32       `json:"port"`
+	PortScanTimeoutMs   pgtype.Int4 `json:"port_scan_timeout_ms"`
+	CredentialProfileID uuid.UUID   `json:"credential_profile_id"`
+	AutoProvision       pgtype.Bool `json:"auto_provision"`
+	AutoRun             pgtype.Bool `json:"auto_run"`
 }
 
 func (q *Queries) CreateDiscoveryProfile(ctx context.Context, arg CreateDiscoveryProfileParams) (DiscoveryProfile, error) {
 	row := q.db.QueryRow(ctx, createDiscoveryProfile,
 		arg.Name,
 		arg.TargetValue,
-		arg.Ports,
+		arg.Port,
 		arg.PortScanTimeoutMs,
-		arg.CredentialProfileIds,
+		arg.CredentialProfileID,
 		arg.AutoProvision,
+		arg.AutoRun,
 	)
 	var i DiscoveryProfile
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
 		&i.TargetValue,
-		&i.Ports,
+		&i.Port,
 		&i.PortScanTimeoutMs,
-		&i.CredentialProfileIds,
+		&i.CredentialProfileID,
 		&i.LastRunAt,
 		&i.LastRunStatus,
 		&i.DevicesDiscovered,
@@ -55,6 +56,7 @@ func (q *Queries) CreateDiscoveryProfile(ctx context.Context, arg CreateDiscover
 		&i.UpdatedAt,
 		&i.DeletedAt,
 		&i.AutoProvision,
+		&i.AutoRun,
 	)
 	return i, err
 }
@@ -71,7 +73,7 @@ func (q *Queries) DeleteDiscoveryProfile(ctx context.Context, id uuid.UUID) erro
 }
 
 const getDiscoveryProfile = `-- name: GetDiscoveryProfile :one
-SELECT id, name, target_value, ports, port_scan_timeout_ms, credential_profile_ids, last_run_at, last_run_status, devices_discovered, created_at, updated_at, deleted_at, auto_provision FROM discovery_profiles
+SELECT id, name, target_value, port, port_scan_timeout_ms, credential_profile_id, last_run_at, last_run_status, devices_discovered, created_at, updated_at, deleted_at, auto_provision, auto_run FROM discovery_profiles
 WHERE id = $1 AND deleted_at IS NULL
 `
 
@@ -82,9 +84,9 @@ func (q *Queries) GetDiscoveryProfile(ctx context.Context, id uuid.UUID) (Discov
 		&i.ID,
 		&i.Name,
 		&i.TargetValue,
-		&i.Ports,
+		&i.Port,
 		&i.PortScanTimeoutMs,
-		&i.CredentialProfileIds,
+		&i.CredentialProfileID,
 		&i.LastRunAt,
 		&i.LastRunStatus,
 		&i.DevicesDiscovered,
@@ -92,12 +94,13 @@ func (q *Queries) GetDiscoveryProfile(ctx context.Context, id uuid.UUID) (Discov
 		&i.UpdatedAt,
 		&i.DeletedAt,
 		&i.AutoProvision,
+		&i.AutoRun,
 	)
 	return i, err
 }
 
 const listDiscoveryProfiles = `-- name: ListDiscoveryProfiles :many
-SELECT id, name, target_value, ports, port_scan_timeout_ms, credential_profile_ids, last_run_at, last_run_status, devices_discovered, created_at, updated_at, deleted_at, auto_provision FROM discovery_profiles
+SELECT id, name, target_value, port, port_scan_timeout_ms, credential_profile_id, last_run_at, last_run_status, devices_discovered, created_at, updated_at, deleted_at, auto_provision, auto_run FROM discovery_profiles
 WHERE deleted_at IS NULL
 ORDER BY created_at DESC
 `
@@ -115,9 +118,9 @@ func (q *Queries) ListDiscoveryProfiles(ctx context.Context) ([]DiscoveryProfile
 			&i.ID,
 			&i.Name,
 			&i.TargetValue,
-			&i.Ports,
+			&i.Port,
 			&i.PortScanTimeoutMs,
-			&i.CredentialProfileIds,
+			&i.CredentialProfileID,
 			&i.LastRunAt,
 			&i.LastRunStatus,
 			&i.DevicesDiscovered,
@@ -125,6 +128,7 @@ func (q *Queries) ListDiscoveryProfiles(ctx context.Context) ([]DiscoveryProfile
 			&i.UpdatedAt,
 			&i.DeletedAt,
 			&i.AutoProvision,
+			&i.AutoRun,
 		); err != nil {
 			return nil, err
 		}
@@ -141,23 +145,25 @@ UPDATE discovery_profiles
 SET 
     name = $2,
     target_value = $3,
-    ports = $4,
+    port = $4,
     port_scan_timeout_ms = $5,
-    credential_profile_ids = $6,
+    credential_profile_id = $6,
     auto_provision = $7,
+    auto_run = $8,
     updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, name, target_value, ports, port_scan_timeout_ms, credential_profile_ids, last_run_at, last_run_status, devices_discovered, created_at, updated_at, deleted_at, auto_provision
+RETURNING id, name, target_value, port, port_scan_timeout_ms, credential_profile_id, last_run_at, last_run_status, devices_discovered, created_at, updated_at, deleted_at, auto_provision, auto_run
 `
 
 type UpdateDiscoveryProfileParams struct {
-	ID                   uuid.UUID       `json:"id"`
-	Name                 string          `json:"name"`
-	TargetValue          string          `json:"target_value"`
-	Ports                json.RawMessage `json:"ports"`
-	PortScanTimeoutMs    pgtype.Int4     `json:"port_scan_timeout_ms"`
-	CredentialProfileIds json.RawMessage `json:"credential_profile_ids"`
-	AutoProvision        pgtype.Bool     `json:"auto_provision"`
+	ID                  uuid.UUID   `json:"id"`
+	Name                string      `json:"name"`
+	TargetValue         string      `json:"target_value"`
+	Port                int32       `json:"port"`
+	PortScanTimeoutMs   pgtype.Int4 `json:"port_scan_timeout_ms"`
+	CredentialProfileID uuid.UUID   `json:"credential_profile_id"`
+	AutoProvision       pgtype.Bool `json:"auto_provision"`
+	AutoRun             pgtype.Bool `json:"auto_run"`
 }
 
 func (q *Queries) UpdateDiscoveryProfile(ctx context.Context, arg UpdateDiscoveryProfileParams) (DiscoveryProfile, error) {
@@ -165,19 +171,20 @@ func (q *Queries) UpdateDiscoveryProfile(ctx context.Context, arg UpdateDiscover
 		arg.ID,
 		arg.Name,
 		arg.TargetValue,
-		arg.Ports,
+		arg.Port,
 		arg.PortScanTimeoutMs,
-		arg.CredentialProfileIds,
+		arg.CredentialProfileID,
 		arg.AutoProvision,
+		arg.AutoRun,
 	)
 	var i DiscoveryProfile
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
 		&i.TargetValue,
-		&i.Ports,
+		&i.Port,
 		&i.PortScanTimeoutMs,
-		&i.CredentialProfileIds,
+		&i.CredentialProfileID,
 		&i.LastRunAt,
 		&i.LastRunStatus,
 		&i.DevicesDiscovered,
@@ -185,6 +192,7 @@ func (q *Queries) UpdateDiscoveryProfile(ctx context.Context, arg UpdateDiscover
 		&i.UpdatedAt,
 		&i.DeletedAt,
 		&i.AutoProvision,
+		&i.AutoRun,
 	)
 	return i, err
 }

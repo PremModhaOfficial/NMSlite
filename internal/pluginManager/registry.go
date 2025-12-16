@@ -1,4 +1,4 @@
-package plugins
+package pluginManager
 
 import (
 	"encoding/json"
@@ -19,21 +19,21 @@ type Registry struct {
 }
 
 // NewRegistry creates a new plugin registry
-func NewRegistry(pluginDir string, logger *slog.Logger) *Registry {
+func NewRegistry(pluginDir string) *Registry {
 	return &Registry{
 		pluginDir: pluginDir,
 		plugins:   make(map[string]*PluginInfo),
 		byPort:    make(map[int][]*PluginInfo),
-		logger:    logger,
+		logger:    slog.Default().With("component", "plugin_registry"),
 	}
 }
 
-// Scan scans the plugin directory and loads all plugins
+// Scan scans the plugin directory and loads all pluginManager
 func (r *Registry) Scan() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	// Clear existing plugins
+	// Clear existing pluginManager
 	r.plugins = make(map[string]*PluginInfo)
 	r.byPort = make(map[int][]*PluginInfo)
 
@@ -106,7 +106,7 @@ func (r *Registry) GetByID(id string) (*PluginInfo, bool) {
 	return plugin, ok
 }
 
-// GetByPort retrieves plugins that handle a specific port
+// GetByPort retrieves pluginManager that handle a specific port
 func (r *Registry) GetByPort(port int) []*PluginInfo {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -119,7 +119,7 @@ func (r *Registry) GetByPort(port int) []*PluginInfo {
 }
 
 // GetByProtocol retrieves the plugin that handles a specific protocol
-// Returns error if no plugin or multiple plugins are found for the protocol
+// Returns error if no plugin or multiple pluginManager are found for the protocol
 func (r *Registry) GetByProtocol(protocol string) (*PluginInfo, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -136,13 +136,13 @@ func (r *Registry) GetByProtocol(protocol string) (*PluginInfo, error) {
 	}
 
 	if len(found) > 1 {
-		return nil, fmt.Errorf("multiple plugins found for protocol %s (expected exactly one)", protocol)
+		return nil, fmt.Errorf("multiple pluginManager found for protocol %s (expected exactly one)", protocol)
 	}
 
 	return found[0], nil
 }
 
-// List returns all registered plugins
+// List returns all registered pluginManager
 func (r *Registry) List() []*PluginInfo {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

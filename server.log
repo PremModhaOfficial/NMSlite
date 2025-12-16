@@ -1,0 +1,17 @@
+Building NMSlite server...
+Starting NMSlite server...
+{"time":"2025-12-16T13:52:13.757349965+05:30","level":"INFO","msg":"Starting NMS Lite Server","version":"1.0.0","host":"0.0.0.0","port":8080}
+{"time":"2025-12-16T13:52:13.771253769+05:30","level":"INFO","msg":"goose: no migrations to run. current version: 20251216120000"}
+{"time":"2025-12-16T13:52:13.771317936+05:30","level":"INFO","msg":"Database pool initialized","max_conns":10}
+{"time":"2025-12-16T13:52:13.771343831+05:30","level":"INFO","msg":"EventChannels initialized","discovery_buffer":50,"monitor_state_buffer":50}
+{"time":"2025-12-16T13:52:13.771419515+05:30","level":"INFO","msg":"BatchWriter started","batch_size":100,"flush_interval_ms":10,"max_buffer_size":10000}
+{"time":"2025-12-16T13:52:13.771443305+05:30","level":"INFO","msg":"batch writer starting","batch_size":100,"flush_interval_ms":10}
+{"time":"2025-12-16T13:52:13.771533932+05:30","level":"INFO","msg":"Loaded plugin","component":"plugin_registry","id":"windows-winrm","name":"Windows Server (WinRM)","version":"1.0.0","port":5985}
+{"time":"2025-12-16T13:52:13.771541388+05:30","level":"INFO","msg":"Plugins loaded","count":1}
+{"time":"2025-12-16T13:52:13.771544175+05:30","level":"INFO","msg":"Plugin registered","id":"windows-winrm","name":"Windows Server (WinRM)","version":"1.0.0","port":5985}
+{"time":"2025-12-16T13:52:13.771552893+05:30","level":"INFO","msg":"Scheduler started","tick_interval_ms":10000,"liveness_workers":100,"plugin_workers":50}
+{"time":"2025-12-16T13:52:13.771564686+05:30","level":"INFO","msg":"Discovery worker starting (with plugin support, channels-based)","worker":"discovery"}
+{"time":"2025-12-16T13:52:13.771571708+05:30","level":"INFO","msg":"starting scheduler","component":"scheduler","tick_interval":10000000000,"liveness_timeout":2000000000,"plugin_timeout":60000000000,"down_threshold":3}
+{"time":"2025-12-16T13:52:13.771587108+05:30","level":"INFO","msg":"Loading active monitors from database","component":"scheduler"}
+{"time":"2025-12-16T13:52:13.771666705+05:30","level":"INFO","msg":"HTTPS server listening","addr":"0.0.0.0:8080"}
+{"time":"2025-12-16T13:52:13.771904095+05:30","level":"ERROR","msg":"HTTPS server failed","error":"listen tcp 0.0.0.0:8080: bind: address already in use"}

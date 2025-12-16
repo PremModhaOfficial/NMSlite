@@ -31,15 +31,9 @@ database:
   password: "nmslite"
   dbname: "nmslite"
   ssl_mode: "disable"
-  api_pool:
-    max_conns: 5
-    min_conns: 1
-    max_conn_lifetime_minutes: 30
-    max_conn_idle_time_minutes: 5
-    health_check_period_seconds: 30
-  metrics_pool:
-    max_conns: 3
-    min_conns: 1
+  pool:
+    max_conns: 10
+    min_conns: 2
     max_conn_lifetime_minutes: 30
     max_conn_idle_time_minutes: 5
     health_check_period_seconds: 30
@@ -87,7 +81,7 @@ discovery:
   handshake_timeout_ms: 5000
 
 # Plugin Configuration
-plugins:
+pluginManager:
   directory: "./plugin_bins/"
   scan_interval_seconds: 60
 

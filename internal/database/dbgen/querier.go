@@ -19,12 +19,18 @@ type Querier interface {
 	DeleteCredentialProfile(ctx context.Context, id uuid.UUID) error
 	DeleteDiscoveryProfile(ctx context.Context, id uuid.UUID) error
 	DeleteMonitor(ctx context.Context, id uuid.UUID) error
+	// Get all unique metric names (for discovery/autocomplete)
+	GetAllMetricNames(ctx context.Context, dollar_1 []uuid.UUID) ([]string, error)
 	GetCredentialProfile(ctx context.Context, id uuid.UUID) (CredentialProfile, error)
 	GetDiscoveredDevice(ctx context.Context, id uuid.UUID) (DiscoveredDevice, error)
 	GetDiscoveryProfile(ctx context.Context, id uuid.UUID) (DiscoveryProfile, error)
 	// Returns only monitor IDs that exist and are not soft-deleted.
 	// Used to validate a batch of IDs before metrics queries.
 	GetExistingMonitorIDs(ctx context.Context, dollar_1 []uuid.UUID) ([]uuid.UUID, error)
+	// Query the latest value for each metric (per device) with prefix matching
+	GetLatestMetricsByDeviceAndPrefix(ctx context.Context, arg GetLatestMetricsByDeviceAndPrefixParams) ([]Metric, error)
+	// Query metrics for devices with prefix matching (SNMP subtree style)
+	GetMetricsByDeviceAndPrefix(ctx context.Context, arg GetMetricsByDeviceAndPrefixParams) ([]Metric, error)
 	GetMonitor(ctx context.Context, id uuid.UUID) (Monitor, error)
 	// Loads active monitors with their credential data in a single query.
 	// Used by scheduler to initialize cache at startup.

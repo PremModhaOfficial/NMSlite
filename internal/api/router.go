@@ -8,12 +8,15 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nmslite/nmslite/internal/auth"
 	"github.com/nmslite/nmslite/internal/channels"
-	"github.com/nmslite/nmslite/internal/config"
+	"github.com/nmslite/nmslite/internal/database/dbgen"
+	"github.com/nmslite/nmslite/internal/globals"
 	"github.com/nmslite/nmslite/internal/middleware"
 )
 
 // NewRouter NewRouter creates and configures the API router
-func NewRouter(cfg *config.Config, authService *auth.Service, logger *slog.Logger, db *pgxpool.Pool, events *channels.EventChannels) http.Handler {
+func NewRouter(authService *auth.Service, db *pgxpool.Pool, events *channels.EventChannels) http.Handler {
+	cfg := globals.GetConfig()
+	logger := slog.Default()
 	r := chi.NewRouter()
 
 	// Global middleware
@@ -32,11 +35,12 @@ func NewRouter(cfg *config.Config, authService *auth.Service, logger *slog.Logge
 	}
 
 	// Initialize handlers
+	queries := dbgen.New(db)
 	healthHandler := NewHealthHandler()
 	authHandler := NewAuthHandler(authService)
-	credentialHandler := NewCredentialHandler(db, authService, events)
-	discoveryHandler := NewDiscoveryHandler(db, authService, events)
-	monitorHandler := NewMonitorHandler(db, events)
+	credentialHandler := NewCredentialHandler(queries, authService, events)
+	discoveryHandler := NewDiscoveryHandler(queries, authService, events)
+	monitorHandler := NewMonitorHandler(queries, events)
 	protocolHandler := NewProtocolHandler()
 
 	// Public routes (no auth required)

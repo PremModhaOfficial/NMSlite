@@ -2,15 +2,11 @@ package api
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nmslite/nmslite/internal/auth"
 	"github.com/nmslite/nmslite/internal/channels"
 	"github.com/nmslite/nmslite/internal/database/dbgen"
@@ -18,17 +14,15 @@ import (
 
 // DiscoveryHandler handles discovery profile endpoints
 type DiscoveryHandler struct {
-	pool        *pgxpool.Pool
 	q           dbgen.Querier
 	authService *auth.Service
 	events      *channels.EventChannels
 }
 
 // NewDiscoveryHandler creates a new discovery handler
-func NewDiscoveryHandler(pool *pgxpool.Pool, authService *auth.Service, events *channels.EventChannels) *DiscoveryHandler {
+func NewDiscoveryHandler(q dbgen.Querier, authService *auth.Service, events *channels.EventChannels) *DiscoveryHandler {
 	return &DiscoveryHandler{
-		pool:        pool,
-		q:           dbgen.New(pool),
+		q:           q,
 		authService: authService,
 		events:      events,
 	}
@@ -37,8 +31,7 @@ func NewDiscoveryHandler(pool *pgxpool.Pool, authService *auth.Service, events *
 // List handles GET /api/v1/discoveries
 func (h *DiscoveryHandler) List(w http.ResponseWriter, r *http.Request) {
 	profiles, err := h.q.ListDiscoveryProfiles(r.Context())
-	if err != nil {
-		sendError(w, r, http.StatusInternalServerError, "DB_ERROR", "Failed to list discovery profiles", err)
+	if handleDBError(w, r, err, "Discovery profiles") {
 		return
 	}
 
@@ -59,12 +52,13 @@ func (h *DiscoveryHandler) List(w http.ResponseWriter, r *http.Request) {
 // Create handles POST /api/v1/discoveries
 func (h *DiscoveryHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Name                 string          `json:"name"`
-		TargetValue          string          `json:"target_value"`
-		Ports                json.RawMessage `json:"ports"`
-		PortScanTimeoutMs    int32           `json:"port_scan_timeout_ms"`
-		CredentialProfileIDs json.RawMessage `json:"credential_profile_ids"`
-		AutoProvision        bool            `json:"auto_provision"`
+		Name                string `json:"name"`
+		TargetValue         string `json:"target_value"`
+		Port                int32  `json:"port"`
+		PortScanTimeoutMs   int32  `json:"port_scan_timeout_ms"`
+		CredentialProfileID string `json:"credential_profile_id"`
+		AutoProvision       bool   `json:"auto_provision"`
+		AutoRun             bool   `json:"auto_run"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -84,13 +78,21 @@ func (h *DiscoveryHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Parse credential profile ID
+	credID, err := uuid.Parse(input.CredentialProfileID)
+	if err != nil {
+		sendError(w, r, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid credential_profile_id format", err)
+		return
+	}
+
 	params := dbgen.CreateDiscoveryProfileParams{
-		Name:                 input.Name,
-		TargetValue:          encryptedTarget,
-		Ports:                input.Ports,
-		PortScanTimeoutMs:    pgtype.Int4{Int32: input.PortScanTimeoutMs, Valid: input.PortScanTimeoutMs > 0},
-		CredentialProfileIds: input.CredentialProfileIDs,
-		AutoProvision:        pgtype.Bool{Bool: input.AutoProvision, Valid: true},
+		Name:                input.Name,
+		TargetValue:         encryptedTarget,
+		Port:                input.Port,
+		PortScanTimeoutMs:   pgtype.Int4{Int32: input.PortScanTimeoutMs, Valid: input.PortScanTimeoutMs > 0},
+		CredentialProfileID: credID,
+		AutoProvision:       pgtype.Bool{Bool: input.AutoProvision, Valid: true},
+		AutoRun:             pgtype.Bool{Bool: input.AutoRun, Valid: true},
 	}
 
 	profile, err := h.q.CreateDiscoveryProfile(r.Context(), params)
@@ -102,25 +104,36 @@ func (h *DiscoveryHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// Return unencrypted value in response
 	profile.TargetValue = input.TargetValue
 
+	// If auto_run is enabled, trigger discovery immediately
+	if input.AutoRun {
+		startedEvent := channels.DiscoveryRequestEvent{
+			ProfileID: profile.ID,
+			StartedAt: time.Now(),
+		}
+
+		// Non-blocking send to trigger discovery
+		select {
+		case h.events.DiscoveryRequest <- startedEvent:
+			// Event sent successfully
+		case <-r.Context().Done():
+			// Context cancelled, but profile is already created
+		default:
+			// Channel full - log but continue (profile created successfully)
+		}
+	}
+
 	sendJSON(w, http.StatusCreated, profile)
 }
 
 // Get handles GET /api/v1/discoveries/{id}
 func (h *DiscoveryHandler) Get(w http.ResponseWriter, r *http.Request) {
-	idStr := chi.URLParam(r, "id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		sendError(w, r, http.StatusBadRequest, "INVALID_ID", "Invalid UUID format", err)
+	id, ok := parseUUIDParam(w, r, "id")
+	if !ok {
 		return
 	}
 
 	profile, err := h.q.GetDiscoveryProfile(r.Context(), id)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			sendError(w, r, http.StatusNotFound, "NOT_FOUND", "Discovery profile not found", nil)
-			return
-		}
-		sendError(w, r, http.StatusInternalServerError, "DB_ERROR", "Failed to get discovery profile", err)
+	if handleDBError(w, r, err, "Discovery profile") {
 		return
 	}
 
@@ -134,19 +147,19 @@ func (h *DiscoveryHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 // Update handles PUT /api/v1/discoveries/{id}
 func (h *DiscoveryHandler) Update(w http.ResponseWriter, r *http.Request) {
-	idStr := chi.URLParam(r, "id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		sendError(w, r, http.StatusBadRequest, "INVALID_ID", "Invalid UUID format", err)
+	id, ok := parseUUIDParam(w, r, "id")
+	if !ok {
 		return
 	}
 
 	var input struct {
-		Name                 string          `json:"name"`
-		TargetValue          string          `json:"target_value"`
-		Ports                json.RawMessage `json:"ports"`
-		PortScanTimeoutMs    int32           `json:"port_scan_timeout_ms"`
-		CredentialProfileIDs json.RawMessage `json:"credential_profile_ids"`
+		Name                string `json:"name"`
+		TargetValue         string `json:"target_value"`
+		Port                int32  `json:"port"`
+		PortScanTimeoutMs   int32  `json:"port_scan_timeout_ms"`
+		CredentialProfileID string `json:"credential_profile_id"`
+		AutoProvision       bool   `json:"auto_provision"`
+		AutoRun             bool   `json:"auto_run"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -161,22 +174,26 @@ func (h *DiscoveryHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Parse credential profile ID
+	credID, err := uuid.Parse(input.CredentialProfileID)
+	if err != nil {
+		sendError(w, r, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid credential_profile_id format", err)
+		return
+	}
+
 	params := dbgen.UpdateDiscoveryProfileParams{
-		ID:                   id,
-		Name:                 input.Name,
-		TargetValue:          encryptedTarget,
-		Ports:                input.Ports,
-		PortScanTimeoutMs:    pgtype.Int4{Int32: input.PortScanTimeoutMs, Valid: input.PortScanTimeoutMs > 0},
-		CredentialProfileIds: input.CredentialProfileIDs,
+		ID:                  id,
+		Name:                input.Name,
+		TargetValue:         encryptedTarget,
+		Port:                input.Port,
+		PortScanTimeoutMs:   pgtype.Int4{Int32: input.PortScanTimeoutMs, Valid: input.PortScanTimeoutMs > 0},
+		CredentialProfileID: credID,
+		AutoProvision:       pgtype.Bool{Bool: input.AutoProvision, Valid: true},
+		AutoRun:             pgtype.Bool{Bool: input.AutoRun, Valid: true},
 	}
 
 	profile, err := h.q.UpdateDiscoveryProfile(r.Context(), params)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			sendError(w, r, http.StatusNotFound, "NOT_FOUND", "Discovery profile not found", nil)
-			return
-		}
-		sendError(w, r, http.StatusInternalServerError, "DB_ERROR", "Failed to update discovery profile", err)
+	if handleDBError(w, r, err, "Discovery profile") {
 		return
 	}
 
@@ -188,16 +205,13 @@ func (h *DiscoveryHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 // Delete handles DELETE /api/v1/discoveries/{id}
 func (h *DiscoveryHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	idStr := chi.URLParam(r, "id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		sendError(w, r, http.StatusBadRequest, "INVALID_ID", "Invalid UUID format", err)
+	id, ok := parseUUIDParam(w, r, "id")
+	if !ok {
 		return
 	}
 
-	err = h.q.DeleteDiscoveryProfile(r.Context(), id)
-	if err != nil {
-		sendError(w, r, http.StatusInternalServerError, "DB_ERROR", "Failed to delete discovery profile", err)
+	err := h.q.DeleteDiscoveryProfile(r.Context(), id)
+	if handleDBError(w, r, err, "Discovery profile") {
 		return
 	}
 
@@ -207,17 +221,14 @@ func (h *DiscoveryHandler) Delete(w http.ResponseWriter, r *http.Request) {
 // Run handles POST /api/v1/discoveries/{id}/run
 // Returns 202 Accepted immediately - discovery runs asynchronously
 func (h *DiscoveryHandler) Run(w http.ResponseWriter, r *http.Request) {
-	idStr := chi.URLParam(r, "id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		sendError(w, r, http.StatusBadRequest, "INVALID_ID", "Invalid UUID format", err)
+	id, ok := parseUUIDParam(w, r, "id")
+	if !ok {
 		return
 	}
 
 	// 1. Fetch Profile to validate it exists
 	profile, err := h.q.GetDiscoveryProfile(r.Context(), id)
-	if err != nil {
-		sendError(w, r, http.StatusNotFound, "NOT_FOUND", "Discovery profile not found", err)
+	if handleDBError(w, r, err, "Discovery profile") {
 		return
 	}
 
@@ -251,16 +262,13 @@ func (h *DiscoveryHandler) Run(w http.ResponseWriter, r *http.Request) {
 
 // GetResults handles GET /api/v1/discoveries/{id}/results
 func (h *DiscoveryHandler) GetResults(w http.ResponseWriter, r *http.Request) {
-	idStr := chi.URLParam(r, "id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		sendError(w, r, http.StatusBadRequest, "INVALID_ID", "Invalid UUID format", err)
+	id, ok := parseUUIDParam(w, r, "id")
+	if !ok {
 		return
 	}
 
 	results, err := h.q.ListDiscoveredDevices(r.Context(), uuid.NullUUID{UUID: id, Valid: true})
-	if err != nil {
-		sendError(w, r, http.StatusInternalServerError, "DB_ERROR", "Failed to list discovery results", err)
+	if handleDBError(w, r, err, "Discovery results") {
 		return
 	}
 

@@ -11,7 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/stdlib"
-	"github.com/nmslite/nmslite/internal/config"
+	"github.com/nmslite/nmslite/internal/globals"
 	"github.com/pressly/goose/v3"
 )
 
@@ -41,10 +41,17 @@ func GetPool() *pgxpool.Pool {
 // The pool is configured for:
 //   - All database operations (API, metrics, etc.)
 //   - Optimized for mixed workloads
-func InitDB(ctx context.Context, cfg *config.Config) error {
+//
+// InitDB initializes the database connection pool.
+// This function is safe to call multiple times - only the first call will initialize the pool.
+//
+// The pool is configured for:
+//   - All database operations (API, metrics, etc.)
+//   - Optimized for mixed workloads
+func InitDB(ctx context.Context) error {
 	initOnce.Do(func() {
 		// Create pool config
-		poolConfig, err := createPoolConfig(cfg)
+		poolConfig, err := createPoolConfig()
 		if err != nil {
 			initErr = fmt.Errorf("failed to create pool config: %w", err)
 			return
@@ -72,7 +79,9 @@ func InitDB(ctx context.Context, cfg *config.Config) error {
 }
 
 // createPoolConfig creates a pgxpool configuration based on the database config.
-func createPoolConfig(cfg *config.Config) (*pgxpool.Config, error) {
+func createPoolConfig() (*pgxpool.Config, error) {
+	cfg := globals.GetConfig()
+
 	// Build connection string
 	connString := fmt.Sprintf(
 		"postgres://%s:%s@%s:%d/%s?sslmode=%s",
@@ -110,7 +119,9 @@ func createPoolConfig(cfg *config.Config) (*pgxpool.Config, error) {
 // connection for goose, which requires the standard library interface.
 //
 // Context timeout is set to 5 minutes to allow for long-running migrations.
-func RunMigrations(ctx context.Context, cfg *config.Config) error {
+func RunMigrations(ctx context.Context) error {
+	cfg := globals.GetConfig()
+
 	// Create a context with timeout for migrations
 	migrateCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()

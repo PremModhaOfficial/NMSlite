@@ -3,7 +3,6 @@ package discovery
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -17,15 +16,15 @@ import (
 	"github.com/nmslite/nmslite/internal/channels"
 	"github.com/nmslite/nmslite/internal/credentials"
 	"github.com/nmslite/nmslite/internal/database/dbgen"
-	"github.com/nmslite/nmslite/internal/plugins"
+	"github.com/nmslite/nmslite/internal/pluginManager"
 )
 
 // Worker processes discovery events asynchronously.
 type Worker struct {
 	events      *channels.EventChannels
 	querier     dbgen.Querier
-	registry    plugins.PluginRegistry
-	executor    *plugins.Executor
+	registry    pluginManager.PluginRegistry
+	executor    *pluginManager.Executor
 	credentials *credentials.Service
 	authService *auth.Service
 	logger      *slog.Logger
@@ -40,8 +39,8 @@ type Worker struct {
 func NewWorker(
 	events *channels.EventChannels,
 	querier dbgen.Querier,
-	registry plugins.PluginRegistry,
-	executor *plugins.Executor,
+	registry pluginManager.PluginRegistry,
+	executor *pluginManager.Executor,
 	credentials *credentials.Service,
 	authService *auth.Service,
 	logger *slog.Logger,
@@ -173,20 +172,9 @@ func (w *Worker) executeDiscovery(
 	profile dbgen.DiscoveryProfile,
 	logger *slog.Logger,
 ) (int, error) {
-	// 1. Parse ports and credential IDs
-	var ports []int
-	if err := json.Unmarshal(profile.Ports, &ports); err != nil {
-		return 0, fmt.Errorf("failed to parse ports: %w", err)
-	}
-
-	var credentialIDs []string
-	if err := json.Unmarshal(profile.CredentialProfileIds, &credentialIDs); err != nil {
-		return 0, fmt.Errorf("failed to parse credential_profile_ids: %w", err)
-	}
-
-	if len(credentialIDs) == 0 {
-		return 0, fmt.Errorf("no credential profiles specified")
-	}
+	// Get port and credential from profile (now single values)
+	port := int(profile.Port)
+	credentialID := profile.CredentialProfileID
 
 	// Decrypt target value
 	decryptedTarget := profile.TargetValue
@@ -209,6 +197,8 @@ func (w *Worker) executeDiscovery(
 		slog.String("target", decryptedTarget),
 		slog.Int("ip_count", len(targetIPs)),
 		slog.String("target_type", string(DetectTargetType(decryptedTarget))),
+		slog.Int("port", port),
+		slog.String("credential_id", credentialID.String()),
 	)
 
 	// Get handshake timeout, default to 5 seconds if not set
@@ -217,120 +207,88 @@ func (w *Worker) executeDiscovery(
 		handshakeTimeout = time.Duration(profile.PortScanTimeoutMs.Int32) * time.Millisecond
 	}
 
+	// Find pluginManager that handle this port
+	matchingPlugins := w.registry.GetByPort(port)
+	if len(matchingPlugins) == 0 {
+		return 0, fmt.Errorf("no plugin found for port %d", port)
+	}
+
+	// Get credential profile
+	credProfile, err := w.querier.GetCredentialProfile(ctx, credentialID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to fetch credential profile: %w", err)
+	}
+
+	// Get decrypted credentials
+	creds, err := w.credentials.GetDecrypted(ctx, credentialID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to decrypt credentials: %w", err)
+	}
+
 	validatedCount := 0
 
-	// 2. For each IP address in the expanded target
+	// For each IP address in the expanded target
 	for _, targetIP := range targetIPs {
 		// Check context cancellation
 		if err := ctx.Err(); err != nil {
 			return validatedCount, fmt.Errorf("discovery cancelled: %w", err)
 		}
 
-		// 2a. For each port
-		for _, port := range ports {
-			// Check context cancellation
-			if err := ctx.Err(); err != nil {
-				return validatedCount, fmt.Errorf("discovery cancelled: %w", err)
-			}
+		// Try handshake with each matching plugin
+		validated := false
+		for _, plugin := range matchingPlugins {
+			var result *HandshakeResult
 
-			// Find plugins that handle this port
-			matchingPlugins := w.registry.GetByPort(port)
-			if len(matchingPlugins) == 0 {
-				logger.DebugContext(ctx, "No plugin found for port, skipping",
-					slog.Int("port", port),
+			switch plugin.Manifest.Protocol {
+			case "ssh":
+				result, _ = ValidateSSH(targetIP, port, creds, handshakeTimeout)
+			case "winrm":
+				result, _ = ValidateWinRM(targetIP, port, creds, handshakeTimeout)
+			case "snmp-v2c":
+				result, _ = ValidateSNMPv2c(targetIP, port, creds, handshakeTimeout)
+			case "snmp-v3":
+				result, _ = ValidateSNMPv3(targetIP, port, creds, handshakeTimeout)
+			default:
+				logger.WarnContext(ctx, "Unknown protocol, skipping handshake",
+					slog.String("protocol", plugin.Manifest.Protocol),
 				)
 				continue
 			}
 
-			// Try protocol handshake with each credential until success
-			validated := false
-			for _, credIDStr := range credentialIDs {
-				credID, err := uuid.Parse(credIDStr)
-				if err != nil {
-					logger.DebugContext(ctx, "Invalid credential ID format",
-						slog.String("credential_id", credIDStr),
-					)
-					continue
-				}
-
-				credProfile, err := w.querier.GetCredentialProfile(ctx, credID)
-				if err != nil {
-					logger.DebugContext(ctx, "Failed to fetch credential profile",
-						slog.String("credential_id", credIDStr),
-						slog.String("error", err.Error()),
-					)
-					continue
-				}
-
-				creds, err := w.credentials.GetDecrypted(ctx, credID)
-				if err != nil {
-					logger.DebugContext(ctx, "Failed to decrypt credentials",
-						slog.String("credential_id", credIDStr),
-						slog.String("error", err.Error()),
-					)
-					continue
-				}
-
-				// Try handshake with each matching plugin
-				for _, plugin := range matchingPlugins {
-					var result *HandshakeResult
-
-					switch plugin.Manifest.Protocol {
-					case "ssh":
-						result, _ = ValidateSSH(targetIP, port, creds, handshakeTimeout)
-					case "winrm":
-						result, _ = ValidateWinRM(targetIP, port, creds, handshakeTimeout)
-					case "snmp-v2c":
-						result, _ = ValidateSNMPv2c(targetIP, port, creds, handshakeTimeout)
-					case "snmp-v3":
-						result, _ = ValidateSNMPv3(targetIP, port, creds, handshakeTimeout)
-					default:
-						logger.WarnContext(ctx, "Unknown protocol, skipping handshake",
-							slog.String("protocol", plugin.Manifest.Protocol),
-						)
-						continue
-					}
-
-					if result != nil && result.Success {
-						logger.InfoContext(ctx, "Protocol handshake succeeded",
-							slog.String("ip", targetIP),
-							slog.Int("port", port),
-							slog.String("protocol", plugin.Manifest.Protocol),
-							slog.String("credential_id", credID.String()),
-						)
-
-						// Publish DeviceValidatedEvent - handler creates DB entries
-						select {
-						case w.events.DeviceValidated <- channels.DeviceValidatedEvent{
-							DiscoveryProfile:  profile,
-							CredentialProfile: credProfile,
-							Plugin:            plugin,
-							IP:                targetIP,
-							Port:              port,
-						}:
-							validatedCount++
-							validated = true
-						case <-ctx.Done():
-							return validatedCount, ctx.Err()
-						default:
-							logger.WarnContext(ctx, "DeviceValidated channel full, event dropped")
-						}
-
-						break // First success, move to next IP/port combo
-					}
-				}
-
-				if validated {
-					break // First credential that worked, move to next IP/port
-				}
-			}
-
-			if !validated {
-				logger.DebugContext(ctx, "No valid credentials for port",
+			if result != nil && result.Success {
+				logger.InfoContext(ctx, "Protocol handshake succeeded",
 					slog.String("ip", targetIP),
 					slog.Int("port", port),
+					slog.String("protocol", plugin.Manifest.Protocol),
+					slog.String("credential_id", credentialID.String()),
 				)
+
+				// Publish DeviceValidatedEvent - handler creates DB entries
+				select {
+				case w.events.DeviceValidated <- channels.DeviceValidatedEvent{
+					DiscoveryProfile:  profile,
+					CredentialProfile: credProfile,
+					Plugin:            plugin,
+					IP:                targetIP,
+					Port:              port,
+				}:
+					validatedCount++
+					validated = true
+				case <-ctx.Done():
+					return validatedCount, ctx.Err()
+				default:
+					logger.WarnContext(ctx, "DeviceValidated channel full, event dropped")
+				}
+
+				break // First plugin success for this IP, move to next IP
 			}
+		}
+
+		if !validated {
+			logger.DebugContext(ctx, "No valid handshake for IP",
+				slog.String("ip", targetIP),
+				slog.Int("port", port),
+			)
 		}
 	}
 
@@ -347,7 +305,7 @@ func (w *Worker) publishCompletedEvent(
 	deviceCount int,
 	_ string, // error message (reserved for future use)
 ) {
-	completedEvent := channels.DiscoveryCompletedEvent{
+	completedEvent := channels.DiscoveryStatusEvent{
 		ProfileID:    event.ProfileID,
 		Status:       statusStr, // "success", "partial", "failed"
 		DevicesFound: deviceCount,
@@ -357,7 +315,7 @@ func (w *Worker) publishCompletedEvent(
 
 	// Non-blocking send with context
 	select {
-	case w.events.DiscoveryCompleted <- completedEvent:
+	case w.events.DiscoveryStatus <- completedEvent:
 		w.logger.DebugContext(ctx, "Published discovery completed event",
 			slog.String("profile_id", event.ProfileID.String()),
 			slog.String("status", statusStr),

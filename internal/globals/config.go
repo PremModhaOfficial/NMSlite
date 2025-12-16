@@ -1,13 +1,15 @@
 // Package config
-package config
+package globals
 
 import (
 	"fmt"
 	"io"
+	"log"
 	"net/url"
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -23,7 +25,7 @@ type Config struct {
 	Scheduler SchedulerConfig `yaml:"scheduler"`
 	Metrics   MetricsConfig   `yaml:"metrics"`
 	Discovery DiscoveryConfig `yaml:"discovery"`
-	Plugins   PluginsConfig   `yaml:"plugins"`
+	Plugins   PluginsConfig   `yaml:"pluginManager"`
 	Channel   EventBusConfig  `yaml:"channel"`
 	Logging   LoggingConfig   `yaml:"logging"`
 }
@@ -474,8 +476,8 @@ func DumpExampleConfig(w io.Writer) error {
 #    - Tune batch sizes for optimal database write performance
 #
 # 4. Plugins:
-#    - Place plugin binaries in the configured plugins directory
-#    - Ensure plugins are executable and have correct permissions
+#    - Place plugin binaries in the configured pluginManager directory
+#    - Ensure pluginManager are executable and have correct permissions
 #
 # For more information, visit: https://github.com/nmslite/nmslite
 # =============================================================================
@@ -485,4 +487,52 @@ func DumpExampleConfig(w io.Writer) error {
 	}
 
 	return nil
+}
+
+// -------------------------------------------------------------------------
+// Global Configuration Access
+// -------------------------------------------------------------------------
+
+var (
+	globalConfig *Config
+	once         sync.Once
+	mu           sync.RWMutex
+)
+
+// InitGlobal initializes the global configuration singleton
+// This should be called once at application startup
+func InitGlobal() *Config {
+	once.Do(func() {
+		mu.Lock()
+		defer mu.Unlock()
+		globalConfig = loadConfig()
+	})
+
+	return globalConfig
+}
+
+func loadConfig() *Config {
+	cfg, err := Load("config.yaml")
+	if err != nil {
+		log.Fatalf("Failed to load configuration: %v", err)
+	}
+	return cfg
+}
+
+// GetConfig returns the global configuration instance
+// Panics if InitGlobal has not been called
+func GetConfig() *Config {
+	mu.RLock()
+	defer mu.RUnlock()
+	if globalConfig == nil {
+		panic("globals.GetConfig() called before InitGlobal()")
+	}
+	return globalConfig
+}
+
+// SetGlobalConfigForTests sets the global configuration instance for testing purposes
+func SetGlobalConfigForTests(cfg *Config) {
+	mu.Lock()
+	defer mu.Unlock()
+	globalConfig = cfg
 }

@@ -46,7 +46,7 @@ build-plugin-winrm:
 	cp plugins/windows-winrm/manifest.json plugin_bins/windows-winrm/manifest.json
 	@echo "Plugin built: plugin_bins/windows-winrm/"
 
-# Build all plugins
+# Build all pluginManager
 .PHONY: build-plugins
 build-plugins: build-plugin-winrm
 

@@ -12,10 +12,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/nmslite/nmslite/internal/channels"
-	"github.com/nmslite/nmslite/internal/config"
 	"github.com/nmslite/nmslite/internal/credentials"
 	"github.com/nmslite/nmslite/internal/database/dbgen"
-	"github.com/nmslite/nmslite/internal/plugins"
+	"github.com/nmslite/nmslite/internal/globals"
+	"github.com/nmslite/nmslite/internal/pluginManager"
 )
 
 // ScheduledMonitor wraps a dbgen.Monitor pointer with runtime scheduling state.
@@ -26,8 +26,8 @@ type ScheduledMonitor struct {
 	IsPolling           bool // True if a poll is currently in progress
 
 	// Crypto/Cache (protected by SchedulerImpl.heapMu)
-	EncryptedCredentials []byte               // Raw JSON from DB (eager loaded)
-	Credentials          *plugins.Credentials // Decrypted on demand
+	EncryptedCredentials []byte                     // Raw JSON from DB (eager loaded)
+	Credentials          *pluginManager.Credentials // Decrypted on demand
 }
 
 // PriorityQueue implements heap.Interface for *ScheduledMonitor
@@ -65,8 +65,8 @@ type SchedulerImpl struct {
 	// Dependencies
 	events         *channels.EventChannels
 	querier        dbgen.Querier
-	pluginExecutor *plugins.Executor
-	pluginRegistry *plugins.Registry
+	pluginExecutor *pluginManager.Executor
+	pluginRegistry *pluginManager.Registry
 	credService    *credentials.Service
 	resultWriter   *ResultWriter
 	logger         *slog.Logger
@@ -97,13 +97,12 @@ type SchedulerImpl struct {
 func NewSchedulerImpl(
 	querier dbgen.Querier,
 	events *channels.EventChannels,
-	pluginExecutor *plugins.Executor,
-	pluginRegistry *plugins.Registry,
+	pluginExecutor *pluginManager.Executor,
+	pluginRegistry *pluginManager.Registry,
 	credService *credentials.Service,
 	resultWriter *ResultWriter,
-	logger *slog.Logger,
-	cfg config.SchedulerConfig,
 ) *SchedulerImpl {
+	cfg := globals.GetConfig().Scheduler
 	return &SchedulerImpl{
 		querier:         querier,
 		events:          events,
@@ -111,7 +110,7 @@ func NewSchedulerImpl(
 		pluginRegistry:  pluginRegistry,
 		credService:     credService,
 		resultWriter:    resultWriter,
-		logger:          logger.With("component", "scheduler"),
+		logger:          slog.Default().With("component", "scheduler"),
 		tickInterval:    cfg.GetTickInterval(),
 		livenessTimeout: cfg.GetLivenessTimeout(),
 		pluginTimeout:   cfg.GetPluginTimeout(),
@@ -463,7 +462,7 @@ func (s *SchedulerImpl) processPluginBatch(ctx context.Context, pluginID string,
 	}
 
 	// Phase 2: Build batch of poll tasks
-	tasks := make([]plugins.PollTask, 0, len(liveMonitors))
+	tasks := make([]pluginManager.PollTask, 0, len(liveMonitors))
 	monitorByRequestID := make(map[string]*ScheduledMonitor, len(liveMonitors))
 
 	for _, sm := range liveMonitors {
@@ -481,7 +480,7 @@ func (s *SchedulerImpl) processPluginBatch(ctx context.Context, pluginID string,
 		}
 
 		requestID := uuid.New().String()
-		tasks = append(tasks, plugins.PollTask{
+		tasks = append(tasks, pluginManager.PollTask{
 			RequestID:   requestID,
 			Target:      sm.Monitor.IpAddress.String(),
 			Port:        port,
@@ -525,7 +524,7 @@ func (s *SchedulerImpl) processPluginBatch(ctx context.Context, pluginID string,
 		if result.Status != "success" {
 			s.handleFailure(sm, fmt.Sprintf("plugin error: %s", result.Error))
 		} else {
-			s.handleSuccess(ctx, sm, []plugins.PollResult{result})
+			s.handleSuccess(ctx, sm, []pluginManager.PollResult{result})
 		}
 	}
 
@@ -541,7 +540,7 @@ func (s *SchedulerImpl) processPluginBatch(ctx context.Context, pluginID string,
 
 // ensureCredentials lazily loads and caches credentials for a monitor.
 // Caller should NOT hold heapMu - this function manages its own locking.
-func (s *SchedulerImpl) ensureCredentials(sm *ScheduledMonitor) (*plugins.Credentials, error) {
+func (s *SchedulerImpl) ensureCredentials(sm *ScheduledMonitor) (*pluginManager.Credentials, error) {
 	s.heapMu.Lock()
 	cred := sm.Credentials
 	if cred != nil {
@@ -567,7 +566,7 @@ func (s *SchedulerImpl) ensureCredentials(sm *ScheduledMonitor) (*plugins.Creden
 }
 
 // handleSuccess processes a successful poll result
-func (s *SchedulerImpl) handleSuccess(ctx context.Context, sm *ScheduledMonitor, results []plugins.PollResult) {
+func (s *SchedulerImpl) handleSuccess(ctx context.Context, sm *ScheduledMonitor, results []pluginManager.PollResult) {
 	s.heapMu.Lock()
 	wasDown := sm.ConsecutiveFailures >= s.downThreshold
 	sm.ConsecutiveFailures = 0

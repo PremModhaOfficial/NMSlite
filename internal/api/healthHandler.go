@@ -52,9 +52,9 @@ func (h *HealthHandler) Ready(w http.ResponseWriter, r *http.Request) {
 	// - Plugin directory readable
 
 	checks := map[string]string{
-		"database": "ok",
-		"queue":    "ok",
-		"plugins":  "ok",
+		"database":      "ok",
+		"queue":         "ok",
+		"pluginManager": "ok",
 	}
 
 	response := ReadinessResponse{

@@ -24,17 +24,9 @@ type PluginOutput struct {
 	Error     string   `json:"error,omitempty"`
 }
 
-// Metric represents a single metric data point
+// Metric represents a single metric data point in SNMP-style key-value format
 type Metric struct {
-	MetricGroup string            `json:"metric_group"`
-	Tags        map[string]string `json:"tags"`
-	ValUsed     float64           `json:"val_used"`
-	ValTotal    *float64          `json:"val_total"` // Pointer allows JSON null for metrics without limits
+	Name  string  `json:"name"` // Hierarchical: "system.cpu.usage"
+	Value float64 `json:"value"`
+	Type  string  `json:"type,omitempty"` // "gauge", "counter", "derive" - defaults to "gauge"
 }
-
-// Float64Ptr Float64Ptr Helper function to create a pointer to a float64 value
-func Float64Ptr(v float64) *float64 {
-	return &v
-}
-
-// Float64PtrOrNil returns nil if value is 0, otherwise returns pointer to value

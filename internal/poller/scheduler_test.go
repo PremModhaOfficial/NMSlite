@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net"
 	"net/netip"
 	"os"
@@ -18,10 +17,10 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/nmslite/nmslite/internal/auth"
 	"github.com/nmslite/nmslite/internal/channels"
-	"github.com/nmslite/nmslite/internal/config"
 	"github.com/nmslite/nmslite/internal/credentials"
 	"github.com/nmslite/nmslite/internal/database/dbgen"
-	"github.com/nmslite/nmslite/internal/plugins"
+	"github.com/nmslite/nmslite/internal/globals"
+	"github.com/nmslite/nmslite/internal/pluginManager"
 )
 
 // MockQuerier is a minimal mock for the test
@@ -87,22 +86,18 @@ echo '[{"request_id": "req-1", "status": "success", "result": {}}]'
 	}
 
 	// 2. Setup Dependencies
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	// Initialize config for test
+	globals.InitGlobal()
 
-	registry := plugins.NewRegistry(tmpDir, logger)
+	// Create scheduler dependencies
+	eventChans := channels.NewEventChannels(context.Background())
+
+	registry := pluginManager.NewRegistry(tmpDir)
 	if err := registry.Scan(); err != nil {
 		t.Fatalf("failed to scan registry: %v", err)
 	}
 
-	executor := plugins.NewExecutor(registry, 2*time.Second, logger)
-
-	// Create channels
-	eventChans := channels.NewEventChannels(context.Background(), channels.EventChannelsConfig{
-		DiscoveryBufferSize:    10,
-		MonitorStateBufferSize: 10,
-		PluginBufferSize:       10,
-		CacheBufferSize:        10,
-	})
+	executor := pluginManager.NewExecutor(registry, 2*time.Second)
 
 	// Mock DB
 	monID := uuid.New()
@@ -129,7 +124,7 @@ echo '[{"request_id": "req-1", "status": "success", "result": {}}]'
 	}
 
 	// Encrypt credentials manually
-	creds := &plugins.Credentials{
+	creds := &pluginManager.Credentials{
 		Username: "user",
 		Password: "password",
 	}
@@ -165,15 +160,18 @@ echo '[{"request_id": "req-1", "status": "success", "result": {}}]'
 	// Re-create cred service with mock querier
 	credService := credentials.NewService(authSvc, mockQuerier)
 
-	// Config
-	cfg := config.SchedulerConfig{
-		TickIntervalMS:    2000, // 2s tick
-		LivenessTimeoutMS: 100,
-		PluginTimeoutMS:   2000,
-		LivenessWorkers:   1,
-		PluginWorkers:     5,
-		DownThreshold:     3,
+	// Config - initialize global for scheduler to use
+	testConfig := &globals.Config{
+		Scheduler: globals.SchedulerConfig{
+			TickIntervalMS:    2000, // 2s tick
+			LivenessTimeoutMS: 100,
+			PluginTimeoutMS:   2000,
+			LivenessWorkers:   1,
+			PluginWorkers:     5,
+			DownThreshold:     3,
+		},
 	}
+	globals.SetGlobalConfigForTests(testConfig)
 
 	scheduler := NewSchedulerImpl(
 		mockQuerier,
@@ -181,9 +179,7 @@ echo '[{"request_id": "req-1", "status": "success", "result": {}}]'
 		executor,
 		registry,
 		credService,
-		&ResultWriter{}, // Dummy
-		logger,
-		cfg,
+		&ResultWriter{batchWriter: &BatchWriter{}}, // Dummy
 	)
 
 	// 3. Execution

@@ -1,12 +1,41 @@
 package collector
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
+	"regexp"
+	"strings"
 
 	"github.com/nmslite/plugins/windows-winrm/models"
 	"github.com/nmslite/plugins/windows-winrm/winrm"
 )
+
+// executeWMIQuery runs a PowerShell script and parses JSON output into a slice of T.
+// If singleFallback is true, it will try parsing as a single object if array parsing fails.
+// This handles the common WMI pattern where single results return an object, not an array.
+func executeWMIQuery[T any](client *winrm.Client, script string, singleFallback bool) ([]T, error) {
+	output, err := client.RunPowerShell(script)
+	if err != nil {
+		return nil, fmt.Errorf("WMI query failed: %w", err)
+	}
+	if output == "" {
+		return nil, fmt.Errorf("no data returned")
+	}
+
+	var results []T
+	if err := json.Unmarshal([]byte(output), &results); err != nil {
+		if singleFallback {
+			var single T
+			if err := json.Unmarshal([]byte(output), &single); err != nil {
+				return nil, fmt.Errorf("parse failed: %w, raw: %s", err, output)
+			}
+			return []T{single}, nil
+		}
+		return nil, fmt.Errorf("parse failed: %w", err)
+	}
+	return results, nil
+}
 
 // Collect runs all metric collectors and returns combined results
 // Uses partial success strategy - if one collector fails, others continue
@@ -57,4 +86,164 @@ func Collect(client *winrm.Client) ([]models.Metric, error) {
 
 	// If we got some metrics, return them (partial success)
 	return allMetrics, nil
+}
+
+// -------------------------------------------------------------------------
+// CPU Collector
+// -------------------------------------------------------------------------
+
+// CPUData represents the WMI output for processor performance
+type CPUData struct {
+	Name                 string `json:"Name"`
+	PercentProcessorTime uint64 `json:"PercentProcessorTime"`
+}
+
+// CollectCPU queries Win32_PerfFormattedData_PerfOS_Processor and returns per-core CPU metrics
+// Excludes the "_Total" aggregate entry
+func CollectCPU(client *winrm.Client) ([]models.Metric, error) {
+	script := `Get-WmiObject Win32_PerfFormattedData_PerfOS_Processor | Where-Object { $_.Name -ne '_Total' } | Select-Object Name, PercentProcessorTime | ConvertTo-Json -Compress`
+
+	cpuData, err := executeWMIQuery[CPUData](client, script, true)
+	if err != nil {
+		return nil, fmt.Errorf("CPU collection failed: %w", err)
+	}
+
+	metrics := make([]models.Metric, 0, len(cpuData))
+	for _, cpu := range cpuData {
+		metrics = append(metrics, models.Metric{
+			Name:  fmt.Sprintf("system.cpu.%s.usage", cpu.Name),
+			Value: float64(cpu.PercentProcessorTime),
+			Type:  "gauge",
+		})
+	}
+	return metrics, nil
+}
+
+// -------------------------------------------------------------------------
+// Memory Collector
+// -------------------------------------------------------------------------
+
+// MemoryData represents the WMI output for operating system memory info
+// Note: WMI returns values in KB
+type MemoryData struct {
+	TotalVisibleMemorySize uint64 `json:"TotalVisibleMemorySize"`
+	FreePhysicalMemory     uint64 `json:"FreePhysicalMemory"`
+}
+
+// CollectMemory queries Win32_OperatingSystem and returns memory usage metrics
+// Values are converted from KB to bytes
+func CollectMemory(client *winrm.Client) ([]models.Metric, error) {
+	script := `Get-WmiObject Win32_OperatingSystem | Select-Object TotalVisibleMemorySize, FreePhysicalMemory | ConvertTo-Json -Compress`
+
+	memData, err := executeWMIQuery[MemoryData](client, script, true)
+	if err != nil {
+		return nil, fmt.Errorf("memory collection failed: %w", err)
+	}
+	if len(memData) == 0 {
+		return nil, fmt.Errorf("no memory data returned")
+	}
+
+	mem := memData[0]
+	totalBytes := float64(mem.TotalVisibleMemorySize) * 1024
+	freeBytes := float64(mem.FreePhysicalMemory) * 1024
+	usedBytes := totalBytes - freeBytes
+	usagePercent := (usedBytes / totalBytes) * 100
+
+	return []models.Metric{
+		{Name: "system.memory.total_bytes", Value: totalBytes, Type: "gauge"},
+		{Name: "system.memory.used_bytes", Value: usedBytes, Type: "gauge"},
+		{Name: "system.memory.free_bytes", Value: freeBytes, Type: "gauge"},
+		{Name: "system.memory.usage_percent", Value: usagePercent, Type: "gauge"},
+	}, nil
+}
+
+// -------------------------------------------------------------------------
+// Disk Collector
+// -------------------------------------------------------------------------
+
+// DiskData represents the WMI output for logical disk info
+type DiskData struct {
+	DeviceID  string `json:"DeviceID"`
+	Size      uint64 `json:"Size"`
+	FreeSpace uint64 `json:"FreeSpace"`
+}
+
+// CollectDisk queries Win32_LogicalDisk and returns per-mount disk usage metrics
+// Only fixed drives (DriveType=3) are included
+func CollectDisk(client *winrm.Client) ([]models.Metric, error) {
+	script := `Get-WmiObject Win32_LogicalDisk -Filter "DriveType=3" | Select-Object DeviceID, Size, FreeSpace | ConvertTo-Json -Compress`
+
+	diskData, err := executeWMIQuery[DiskData](client, script, true)
+	if err != nil {
+		return nil, fmt.Errorf("disk collection failed: %w", err)
+	}
+
+	var metrics []models.Metric
+	for _, disk := range diskData {
+		if disk.Size == 0 {
+			continue
+		}
+
+		totalBytes := float64(disk.Size)
+		freeBytes := float64(disk.FreeSpace)
+		usedBytes := totalBytes - freeBytes
+		usagePercent := (usedBytes / totalBytes) * 100
+		deviceName := strings.ToLower(strings.TrimSuffix(disk.DeviceID, ":"))
+
+		metrics = append(metrics,
+			models.Metric{Name: fmt.Sprintf("system.disk.%s.total_bytes", deviceName), Value: totalBytes, Type: "gauge"},
+			models.Metric{Name: fmt.Sprintf("system.disk.%s.used_bytes", deviceName), Value: usedBytes, Type: "gauge"},
+			models.Metric{Name: fmt.Sprintf("system.disk.%s.free_bytes", deviceName), Value: freeBytes, Type: "gauge"},
+			models.Metric{Name: fmt.Sprintf("system.disk.%s.usage_percent", deviceName), Value: usagePercent, Type: "gauge"},
+		)
+	}
+	return metrics, nil
+}
+
+// -------------------------------------------------------------------------
+// Network Collector
+// -------------------------------------------------------------------------
+
+// NetworkData represents the WMI output for network interface performance
+type NetworkData struct {
+	Name                string `json:"Name"`
+	BytesReceivedPersec uint64 `json:"BytesReceivedPersec"`
+	BytesSentPersec     uint64 `json:"BytesSentPersec"`
+	CurrentBandwidth    uint64 `json:"CurrentBandwidth"` // bits per second
+}
+
+// CollectNetwork queries Win32_PerfFormattedData_Tcpip_NetworkInterface
+// and returns per-interface network metrics with separate in/out direction entries
+func CollectNetwork(client *winrm.Client) ([]models.Metric, error) {
+	script := `Get-WmiObject Win32_PerfFormattedData_Tcpip_NetworkInterface | Select-Object Name, BytesReceivedPersec, BytesSentPersec, CurrentBandwidth | ConvertTo-Json -Compress`
+
+	netData, err := executeWMIQuery[NetworkData](client, script, true)
+	if err != nil {
+		return nil, fmt.Errorf("network collection failed: %w", err)
+	}
+
+	var metrics []models.Metric
+	for _, net := range netData {
+		ifaceName := sanitizeInterfaceName(net.Name)
+		linkSpeedBytes := float64(net.CurrentBandwidth) / 8
+
+		metrics = append(metrics,
+			models.Metric{Name: fmt.Sprintf("network.%s.bytes_recv_per_sec", ifaceName), Value: float64(net.BytesReceivedPersec), Type: "gauge"},
+			models.Metric{Name: fmt.Sprintf("network.%s.bytes_sent_per_sec", ifaceName), Value: float64(net.BytesSentPersec), Type: "gauge"},
+		)
+		if linkSpeedBytes > 0 {
+			metrics = append(metrics,
+				models.Metric{Name: fmt.Sprintf("network.%s.bandwidth_bytes", ifaceName), Value: linkSpeedBytes, Type: "gauge"},
+			)
+		}
+	}
+	return metrics, nil
+}
+
+// sanitizeInterfaceName converts interface names to safe metric names
+func sanitizeInterfaceName(name string) string {
+	re := regexp.MustCompile(`[^a-zA-Z0-9]+`)
+	result := re.ReplaceAllString(name, "_")
+	result = strings.Trim(result, "_")
+	return strings.ToLower(result)
 }

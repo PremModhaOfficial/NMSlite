@@ -2,7 +2,6 @@ package poller
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -12,24 +11,23 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/nmslite/nmslite/internal/config"
+	"github.com/nmslite/nmslite/internal/globals"
 )
 
-// MetricRecord represents a metric ready for database insertion
+// MetricRecord represents a metric ready for database insertion (key-value format)
 type MetricRecord struct {
-	MonitorID   uuid.UUID
-	Timestamp   time.Time
-	MetricGroup string
-	Tags        map[string]interface{}
-	ValUsed     *float64
-	ValTotal    *float64
+	MonitorID uuid.UUID
+	Timestamp time.Time
+	Name      string
+	Value     float64
+	Type      string // "gauge", "counter", "derive"
 }
 
 // BatchWriter handles bulk metric writes using pgx COPY protocol
 type BatchWriter struct {
 	pool   *pgxpool.Pool
 	logger *slog.Logger
-	cfg    *config.MetricsConfig
+	cfg    *globals.MetricsConfig
 
 	// Buffering and flow control
 	submitCh      chan MetricRecord
@@ -50,7 +48,10 @@ type BatchWriter struct {
 }
 
 // NewBatchWriter creates a new BatchWriter instance
-func NewBatchWriter(pool *pgxpool.Pool, cfg *config.MetricsConfig, logger *slog.Logger) *BatchWriter {
+func NewBatchWriter(pool *pgxpool.Pool) *BatchWriter {
+	cfg := &globals.GetConfig().Metrics
+	logger := slog.Default()
+
 	// Set defaults if not configured
 	batchSize := cfg.BatchSize
 	if batchSize <= 0 {
@@ -79,7 +80,6 @@ func NewBatchWriter(pool *pgxpool.Pool, cfg *config.MetricsConfig, logger *slog.
 }
 
 // Submit adds a metric record to the batch queue with backpressure
-// This method blocks if the submit channel is full, providing natural backpressure
 func (bw *BatchWriter) Submit(ctx context.Context, record MetricRecord) error {
 	select {
 	case bw.submitCh <- record:
@@ -107,20 +107,17 @@ func (bw *BatchWriter) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			bw.logger.Info("batch writer shutting down, flushing remaining data")
-			// Flush any remaining data before shutdown
 			if err := bw.flush(context.Background()); err != nil {
 				bw.logger.Error("final flush failed", "error", err)
 			}
 			return ctx.Err()
 
 		case record := <-bw.submitCh:
-			// Add record to current batch
 			bw.batchMu.Lock()
 			bw.currentBatch = append(bw.currentBatch, record)
 			currentSize := len(bw.currentBatch)
 			bw.batchMu.Unlock()
 
-			// Flush if batch is full
 			if currentSize >= bw.cfg.BatchSize {
 				if err := bw.flush(ctx); err != nil {
 					bw.logger.Error("flush on batch size failed", "error", err)
@@ -128,7 +125,6 @@ func (bw *BatchWriter) Run(ctx context.Context) error {
 			}
 
 		case <-flushTicker.C:
-			// Periodic flush based on time interval
 			bw.batchMu.Lock()
 			hasData := len(bw.currentBatch) > 0
 			bw.batchMu.Unlock()
@@ -150,15 +146,13 @@ func (bw *BatchWriter) flush(ctx context.Context) error {
 		return nil
 	}
 
-	// Swap current batch with a new one
 	batch := bw.currentBatch
 	bw.currentBatch = make([]MetricRecord, 0, bw.cfg.BatchSize)
 	bw.batchMu.Unlock()
 
-	// Include requeued items in this flush
 	bw.bufferMu.Lock()
 	if len(bw.requeueBuffer) > 0 {
-		requeuedCount := len(bw.requeueBuffer) // Capture count before reset
+		requeuedCount := len(bw.requeueBuffer)
 		batch = append(bw.requeueBuffer, batch...)
 		bw.requeueBuffer = make([]MetricRecord, 0, bw.cfg.BatchSize*10)
 		bw.logger.Info("including requeued items in flush", "requeued_count", requeuedCount)
@@ -176,10 +170,8 @@ func (bw *BatchWriter) flush(ctx context.Context) error {
 			"duration_ms", duration.Milliseconds(),
 		)
 
-		// Track failure and requeue
 		bw.consecutiveFailures++
 
-		// Requeue if we haven't exceeded max failures
 		if bw.consecutiveFailures < bw.maxConsecutiveFails {
 			bw.requeue(batch)
 		} else {
@@ -192,7 +184,6 @@ func (bw *BatchWriter) flush(ctx context.Context) error {
 		return err
 	}
 
-	// Success - reset failure counter
 	bw.consecutiveFailures = 0
 
 	bw.logger.Debug("batch written successfully",
@@ -210,7 +201,6 @@ func (bw *BatchWriter) writeBatch(ctx context.Context, batch []MetricRecord) err
 		return nil
 	}
 
-	// Use a transaction for COPY
 	tx, err := bw.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
@@ -221,30 +211,19 @@ func (bw *BatchWriter) writeBatch(ctx context.Context, batch []MetricRecord) err
 		}
 	}()
 
-	// Use COPY protocol for bulk insert
+	// Use COPY protocol for bulk insert - key-value format with type
 	copyCount, err := tx.Conn().CopyFrom(
 		ctx,
 		pgx.Identifier{"metrics"},
-		[]string{"timestamp", "metric_group", "device_id", "tags", "val_used", "val_total"},
+		[]string{"timestamp", "device_id", "name", "value", "type"},
 		pgx.CopyFromSlice(len(batch), func(i int) ([]interface{}, error) {
 			record := batch[i]
-
-			// Marshal tags to JSON
-			var tagsJSON []byte
-			if record.Tags != nil {
-				tagsJSON, err = json.Marshal(record.Tags)
-				if err != nil {
-					return nil, fmt.Errorf("failed to marshal tags: %w", err)
-				}
-			}
-
 			return []interface{}{
 				record.Timestamp,
-				record.MetricGroup,
 				record.MonitorID,
-				tagsJSON,
-				record.ValUsed,
-				record.ValTotal,
+				record.Name,
+				record.Value,
+				record.Type,
 			}, nil
 		}),
 	)
@@ -257,7 +236,6 @@ func (bw *BatchWriter) writeBatch(ctx context.Context, batch []MetricRecord) err
 		return fmt.Errorf("COPY count mismatch: expected %d, got %d", len(batch), copyCount)
 	}
 
-	// Commit the transaction
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
@@ -282,7 +260,6 @@ func (bw *BatchWriter) requeue(batch []MetricRecord) {
 		return
 	}
 
-	// If batch is larger than available space, only requeue what fits
 	toRequeue := batch
 	if len(batch) > availableSpace {
 		toRequeue = batch[:availableSpace]
