@@ -236,10 +236,10 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"name\": \"SSH Credentials\",\n    \"description\": \"SSH access for Linux servers\",\n    \"protocol\": \"ssh\",\n    \"credential_data\": {\n        \"username\": \"admin\",\n        \"password\": \"secure_password\",\n        \"port\": 22\n    }\n}"
+							"raw": "{\n    \"name\": \"SSH Credentials\",\n    \"description\": \"SSH access for Linux servers\",\n    \"protocol\": \"ssh\",\n    \"payload\": {\n        \"username\": \"admin\",\n        \"password\": \"secure_password\",\n        \"port\": 22\n    }\n}"
 						},
 						"url": "{{base_url}}/api/v1/credentials",
-						"description": "Create a new SSH credential profile. The credential_data is sent in plaintext; the backend encrypts it before storage."
+						"description": "Create a new SSH credential profile. The payload is sent in plaintext; the backend encrypts it before storage."
 					},
 					"response": [],
 					"event": [
@@ -288,7 +288,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"name\": \"WinRM Credentials\",\n    \"description\": \"Windows Remote Management credentials\",\n    \"protocol\": \"winrm\",\n    \"credential_data\": {\n        \"username\": \"administrator\",\n        \"password\": \"WindowsPassword123!\",\n        \"domain\": \"CORP\"\n    }\n}"
+							"raw": "{\n    \"name\": \"WinRM Credentials\",\n    \"description\": \"Windows Remote Management credentials\",\n    \"protocol\": \"winrm\",\n    \"payload\": {\n        \"username\": \"administrator\",\n        \"password\": \"WindowsPassword123!\",\n        \"domain\": \"CORP\"\n    }\n}"
 						},
 						"url": "{{base_url}}/api/v1/credentials",
 						"description": "Create a new WinRM credential profile for Windows servers."
@@ -330,7 +330,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"name\": \"SNMP v2c Credentials\",\n    \"description\": \"SNMP v2c community string for network devices\",\n    \"protocol\": \"snmp-v2c\",\n    \"credential_data\": {\n        \"community\": \"public\",\n        \"port\": 161\n    }\n}"
+							"raw": "{\n    \"name\": \"SNMP v2c Credentials\",\n    \"description\": \"SNMP v2c community string for network devices\",\n    \"protocol\": \"snmp-v2c\",\n    \"payload\": {\n        \"community\": \"public\",\n        \"port\": 161\n    }\n}"
 						},
 						"url": "{{base_url}}/api/v1/credentials",
 						"description": "Create a new SNMP v2c credential profile."
@@ -372,7 +372,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"name\": \"SNMP v3 Credentials\",\n    \"description\": \"SNMP v3 secure credentials for network devices\",\n    \"protocol\": \"snmp-v3\",\n    \"credential_data\": {\n        \"username\": \"snmpuser\",\n        \"security_level\": \"authPriv\",\n        \"auth_protocol\": \"SHA\",\n        \"auth_password\": \"authpass123\",\n        \"priv_protocol\": \"AES\",\n        \"priv_password\": \"privpass123\",\n        \"port\": 161\n    }\n}"
+							"raw": "{\n    \"name\": \"SNMP v3 Credentials\",\n    \"description\": \"SNMP v3 secure credentials for network devices\",\n    \"protocol\": \"snmp-v3\",\n    \"payload\": {\n        \"username\": \"snmpuser\",\n        \"security_level\": \"authPriv\",\n        \"auth_protocol\": \"SHA\",\n        \"auth_password\": \"authpass123\",\n        \"priv_protocol\": \"AES\",\n        \"priv_password\": \"privpass123\",\n        \"port\": 161\n    }\n}"
 						},
 						"url": "{{base_url}}/api/v1/credentials",
 						"description": "Create a new SNMP v3 credential profile with authentication and privacy."
@@ -452,7 +452,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"name\": \"Updated SSH Credentials\",\n    \"description\": \"Updated SSH access for servers\",\n    \"protocol\": \"ssh\",\n    \"credential_data\": {\n        \"username\": \"newadmin\",\n        \"password\": \"new_secure_password\",\n        \"port\": 22\n    }\n}"
+							"raw": "{\n    \"name\": \"Updated SSH Credentials\",\n    \"description\": \"Updated SSH access for servers\",\n    \"protocol\": \"ssh\",\n    \"payload\": {\n        \"username\": \"newadmin\",\n        \"password\": \"new_secure_password\",\n        \"port\": 22\n    }\n}"
 						},
 						"url": "{{base_url}}/api/v1/credentials/{{credential_id}}",
 						"description": "Update an existing credential profile."
@@ -1083,34 +1083,16 @@
 								"exec": [
 									"pm.test('Status code is 204', function () {",
 									"    pm.response.to.have.status(204);",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "Restore Monitor",
-					"request": {
-						"method": "PATCH",
-						"header": [],
-						"url": "{{base_url}}/api/v1/monitors/{{monitor_id}}/restore",
-						"description": "Restore a soft-deleted monitor."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test('Status code is 200', function () {",
-									"    pm.response.to.have.status(200);",
 									"});",
 									"",
-									"pm.test('deleted_at is null', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.deleted_at).to.be.null;",
+									"pm.test('Monitor is truly deleted', function () {",
+									"   // Verify subsequent GET returns 404",
+									"   pm.sendRequest({",
+									"       url: pm.variables.get('base_url') + '/api/v1/monitors/' + pm.variables.get('monitor_id'),",
+									"       method: 'GET'",
+									"   }, function (err, res) {",
+									"       pm.expect(res.code).to.eql(404);",
+									"   });",
 									"});"
 								],
 								"type": "text/javascript"

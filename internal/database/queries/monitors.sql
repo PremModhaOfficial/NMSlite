@@ -1,6 +1,5 @@
 -- name: ListMonitors :many
 SELECT * FROM monitors
-WHERE deleted_at IS NULL
 ORDER BY created_at DESC;
 
 -- name: CreateMonitor :one
@@ -23,7 +22,7 @@ RETURNING *;
 
 -- name: GetMonitor :one
 SELECT * FROM monitors
-WHERE id = $1 AND deleted_at IS NULL;
+WHERE id = $1;
 
 -- name: UpdateMonitor :one
 UPDATE monitors
@@ -37,12 +36,11 @@ SET
     port = $8,
     status = $9,
     updated_at = NOW()
-WHERE id = $1 AND deleted_at IS NULL
+WHERE id = $1
 RETURNING *;
 
 -- name: DeleteMonitor :exec
-UPDATE monitors
-SET deleted_at = NOW()
+DELETE FROM monitors
 WHERE id = $1;
 
 -- name: ListActiveMonitorsWithCredentials :many
@@ -51,19 +49,46 @@ WHERE id = $1;
 SELECT 
     m.id, m.display_name, m.hostname, m.ip_address, m.plugin_id, 
     m.credential_profile_id, m.discovery_profile_id, m.port, 
-    m.polling_interval_seconds, m.status, m.created_at, m.updated_at, m.deleted_at,
-    c.credential_data
+    m.polling_interval_seconds, m.status, m.created_at, m.updated_at,
+    c.payload
 FROM monitors m
 JOIN credential_profiles c ON m.credential_profile_id = c.id
-WHERE m.status = 'active' AND m.deleted_at IS NULL;
+WHERE m.status = 'active';
 
 -- name: UpdateMonitorStatus :exec
 -- Updates monitor status (active/down) and updated_at timestamp.
 UPDATE monitors
 SET status = $2, updated_at = NOW()
-WHERE id = $1 AND deleted_at IS NULL;
+WHERE id = $1;
 
 -- name: GetExistingMonitorIDs :many
 -- Returns only monitor IDs that exist and are not soft-deleted.
 -- Used to validate a batch of IDs before metrics queries.
-SELECT id FROM monitors WHERE id = ANY(sqlc.arg(monitor_ids)::uuid[]) AND deleted_at IS NULL;
+SELECT id FROM monitors WHERE id = ANY(sqlc.arg(monitor_ids)::uuid[]);
+
+-- name: GetMonitorWithCredentials :one
+-- Fetches a single monitor with its credential data.
+-- Used for efficient cache invalidation.
+SELECT 
+    m.id, m.display_name, m.hostname, m.ip_address, m.plugin_id, 
+    m.credential_profile_id, m.discovery_profile_id, m.port, 
+    m.polling_interval_seconds, m.status, m.created_at, m.updated_at,
+    c.payload
+FROM monitors m
+JOIN credential_profiles c ON m.credential_profile_id = c.id
+WHERE m.id = $1;
+
+-- name: GetMonitorsWithCredentialsByCredentialID :many
+-- Fetches all monitors using a specific credential profile, with their credential data.
+-- Used for efficient cache invalidation when a credential profile changes.
+SELECT 
+    m.id, m.display_name, m.hostname, m.ip_address, m.plugin_id, 
+    m.credential_profile_id, m.discovery_profile_id, m.port, 
+    m.polling_interval_seconds, m.status, m.created_at, m.updated_at,
+    c.payload
+FROM monitors m
+JOIN credential_profiles c ON m.credential_profile_id = c.id
+WHERE m.credential_profile_id = $1;
+
+-- name: GetMonitorsByCredentialID :many
+SELECT id FROM monitors WHERE credential_profile_id = $1;

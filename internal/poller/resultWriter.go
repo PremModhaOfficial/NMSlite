@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/nmslite/nmslite/internal/pluginManager"
+	plugins "github.com/nmslite/nmslite/internal/plugins"
 )
 
 // ResultWriter handles writing poll results to the database via BatchWriter
@@ -25,7 +25,7 @@ func NewResultWriter(batchWriter *BatchWriter) *ResultWriter {
 }
 
 // Write processes poll results and submits metrics to BatchWriter for bulk insertion
-func (w *ResultWriter) Write(ctx context.Context, monitorID uuid.UUID, results []pluginManager.PollResult) {
+func (w *ResultWriter) Write(ctx context.Context, monitorID uuid.UUID, results []plugins.PollResult) {
 	timestamp := time.Now()
 
 	for _, result := range results {

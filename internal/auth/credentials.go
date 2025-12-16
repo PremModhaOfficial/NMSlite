@@ -1,4 +1,4 @@
-package credentials
+package auth
 
 import (
 	"context"
@@ -6,27 +6,26 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/nmslite/nmslite/internal/auth"
 	"github.com/nmslite/nmslite/internal/database/dbgen"
-	"github.com/nmslite/nmslite/internal/pluginManager"
+	"github.com/nmslite/nmslite/internal/plugins"
 )
 
-// Service handles credential operations
-type Service struct {
-	authService *auth.Service
+// CredentialService handles credential decryption operations
+type CredentialService struct {
+	authService *Service
 	querier     dbgen.Querier
 }
 
-// NewService creates a new credential service
-func NewService(authService *auth.Service, querier dbgen.Querier) *Service {
-	return &Service{
+// NewCredentialService creates a new credential service
+func NewCredentialService(authService *Service, querier dbgen.Querier) *CredentialService {
+	return &CredentialService{
 		authService: authService,
 		querier:     querier,
 	}
 }
 
 // GetDecrypted fetches and decrypts a credential profile
-func (s *Service) GetDecrypted(ctx context.Context, profileID uuid.UUID) (*pluginManager.Credentials, error) {
+func (s *CredentialService) GetDecrypted(ctx context.Context, profileID uuid.UUID) (*plugins.Credentials, error) {
 	// Fetch credential profile
 	profile, err := s.querier.GetCredentialProfile(ctx, profileID)
 	if err != nil {
@@ -34,12 +33,12 @@ func (s *Service) GetDecrypted(ctx context.Context, profileID uuid.UUID) (*plugi
 	}
 
 	// Delegate to shared decryption logic
-	return s.DecryptContainer(profile.CredentialData)
+	return s.DecryptContainer(profile.Payload)
 }
 
-// DecryptContainer decrypts the raw credential_data JSON blob (which contains an encrypted string)
-func (s *Service) DecryptContainer(container []byte) (*pluginManager.Credentials, error) {
-	// Decrypt credential_data (expecting a JSON string containing the encrypted payload)
+// DecryptContainer decrypts the raw payload JSON blob (which contains an encrypted string)
+func (s *CredentialService) DecryptContainer(container []byte) (*plugins.Credentials, error) {
+	// Decrypt payload (expecting a JSON string containing the encrypted payload)
 	var encryptedStr string
 	if err := json.Unmarshal(container, &encryptedStr); err != nil {
 		// Fallback: try using the raw data as string (legacy/unencrypted support)
@@ -58,7 +57,7 @@ func (s *Service) DecryptContainer(container []byte) (*pluginManager.Credentials
 	}
 
 	// Build Credentials struct
-	creds := &pluginManager.Credentials{}
+	creds := &plugins.Credentials{}
 
 	if username, ok := credMap["username"].(string); ok {
 		creds.Username = username

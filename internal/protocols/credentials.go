@@ -20,7 +20,6 @@ type SSHCredentials struct {
 	Password   string `json:"password,omitempty"`
 	PrivateKey string `json:"private_key,omitempty"`
 	Passphrase string `json:"passphrase,omitempty"`
-	Port       int    `json:"port,omitempty"`
 }
 
 // Validate implements custom validation for SSH credentials

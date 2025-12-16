@@ -1,4 +1,4 @@
-package pluginManager
+package plugins
 
 import (
 	"encoding/json"

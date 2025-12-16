@@ -1,4 +1,4 @@
-package channels
+package discovery
 
 import (
 	"context"
@@ -7,12 +7,12 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/nmslite/nmslite/internal/channels"
 	"github.com/nmslite/nmslite/internal/database/dbgen"
 )
 
-// StartDiscoveryCompletionLogger starts a goroutine that logs discovery completion events.
-// This replaces the old eventbus handlers pattern with a simple channel consumer.
-func StartDiscoveryCompletionLogger(ctx context.Context, events *EventChannels, logger *slog.Logger) {
+// StartDiscoveryCompletionLogger starts a goroutine that logs discovery completion events AND broadcasts them.
+func StartDiscoveryCompletionLogger(ctx context.Context, events *channels.EventChannels, hub *Hub, logger *slog.Logger) {
 	go func() {
 		for {
 			select {
@@ -26,6 +26,14 @@ func StartDiscoveryCompletionLogger(ctx context.Context, events *EventChannels, 
 					slog.Int("devices_found", event.DevicesFound),
 					slog.String("duration", event.CompletedAt.Sub(event.StartedAt).String()),
 				)
+
+				// Broadcast to websocket
+				hub.Broadcast("status_change", event.ProfileID, map[string]interface{}{
+					"status":        event.Status,
+					"devices_found": event.DevicesFound,
+					"duration":      event.CompletedAt.Sub(event.StartedAt).String(),
+				})
+
 			case <-ctx.Done():
 				return
 			case <-events.Done():
@@ -35,8 +43,8 @@ func StartDiscoveryCompletionLogger(ctx context.Context, events *EventChannels, 
 	}()
 }
 
-// StartProvisionHandler listens for DeviceValidatedEvent and creates discovered devices and monitors
-func StartProvisionHandler(ctx context.Context, events *EventChannels, querier dbgen.Querier, logger *slog.Logger) {
+// StartProvisionHandler listens for DeviceValidatedEvent, creates DB entries, and broadcasts progress.
+func StartProvisionHandler(ctx context.Context, events *channels.EventChannels, querier dbgen.Querier, hub *Hub, logger *slog.Logger) {
 	go func() {
 		for {
 			select {
@@ -50,6 +58,14 @@ func StartProvisionHandler(ctx context.Context, events *EventChannels, querier d
 					slog.Int("port", event.Port),
 					slog.String("protocol", event.Plugin.Manifest.Protocol),
 				)
+
+				// Broadcast device found event immediately
+				hub.Broadcast("device_found", event.DiscoveryProfile.ID, map[string]interface{}{
+					"ip":       event.IP,
+					"port":     event.Port,
+					"protocol": event.Plugin.Manifest.Protocol,
+					"plugin":   event.Plugin.Manifest.ID,
+				})
 
 				// 1. Create discovered_devices entry
 				_, err := querier.CreateDiscoveredDevice(ctx, dbgen.CreateDiscoveredDeviceParams{
@@ -73,7 +89,7 @@ func StartProvisionHandler(ctx context.Context, events *EventChannels, querier d
 						slog.Int("port", event.Port),
 					)
 
-					_, err := querier.CreateMonitor(ctx, dbgen.CreateMonitorParams{
+					monitor, err := querier.CreateMonitor(ctx, dbgen.CreateMonitorParams{
 						IpAddress:           netip.MustParseAddr(event.IP),
 						Port:                pgtype.Int4{Int32: int32(event.Port), Valid: true},
 						PluginID:            event.Plugin.Manifest.ID,
@@ -92,6 +108,22 @@ func StartProvisionHandler(ctx context.Context, events *EventChannels, querier d
 						slog.String("ip", event.IP),
 						slog.String("plugin", event.Plugin.Manifest.ID),
 					)
+
+					// 3. Emit cache invalidation for the new monitor
+					fullMonitor, err := querier.GetMonitorWithCredentials(ctx, monitor.ID)
+					if err != nil {
+						logger.Error("failed to fetch created monitor for cache invalidation", "error", err)
+						continue
+					}
+
+					select {
+					case events.CacheInvalidate <- channels.CacheInvalidateEvent{
+						UpdateType: "update",
+						Monitors:   []dbgen.GetMonitorWithCredentialsRow{fullMonitor},
+					}:
+					case <-ctx.Done():
+						return
+					}
 				}
 
 			case <-ctx.Done():

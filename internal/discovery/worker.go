@@ -14,18 +14,17 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/nmslite/nmslite/internal/auth"
 	"github.com/nmslite/nmslite/internal/channels"
-	"github.com/nmslite/nmslite/internal/credentials"
 	"github.com/nmslite/nmslite/internal/database/dbgen"
-	"github.com/nmslite/nmslite/internal/pluginManager"
+	"github.com/nmslite/nmslite/internal/plugins"
 )
 
 // Worker processes discovery events asynchronously.
 type Worker struct {
 	events      *channels.EventChannels
 	querier     dbgen.Querier
-	registry    pluginManager.PluginRegistry
-	executor    *pluginManager.Executor
-	credentials *credentials.Service
+	registry    *plugins.Registry
+	executor    *plugins.Executor
+	credentials *auth.CredentialService
 	authService *auth.Service
 	logger      *slog.Logger
 
@@ -39,9 +38,9 @@ type Worker struct {
 func NewWorker(
 	events *channels.EventChannels,
 	querier dbgen.Querier,
-	registry pluginManager.PluginRegistry,
-	executor *pluginManager.Executor,
-	credentials *credentials.Service,
+	registry *plugins.Registry,
+	executor *plugins.Executor,
+	credentials *auth.CredentialService,
 	authService *auth.Service,
 	logger *slog.Logger,
 ) *Worker {
@@ -133,6 +132,19 @@ func (w *Worker) handleDiscoveryStartedEvent(ctx context.Context, event channels
 		slog.String("target_value", profile.TargetValue),
 	)
 
+	// Update status to RUNNING
+	updateRunErr := w.querier.UpdateDiscoveryProfileStatus(ctx, dbgen.UpdateDiscoveryProfileStatusParams{
+		ID:                profile.ID,
+		LastRunStatus:     pgtype.Text{String: "running", Valid: true},
+		DevicesDiscovered: pgtype.Int4{Int32: 0, Valid: true},
+	})
+	if updateRunErr != nil {
+		logger.ErrorContext(ctx, "Failed to update discovery profile status to running",
+			slog.String("error", updateRunErr.Error()),
+		)
+		// Continue even if status update failed, main logic is execution
+	}
+
 	// Execute discovery
 	monitorCount, jobErr := w.executeDiscovery(ctx, profile, logger)
 
@@ -145,7 +157,7 @@ func (w *Worker) handleDiscoveryStartedEvent(ctx context.Context, event channels
 		)
 	}
 
-	// Update discovery profile status in database
+	// Update discovery profile status in database - FINAL
 	updateErr := w.querier.UpdateDiscoveryProfileStatus(ctx, dbgen.UpdateDiscoveryProfileStatusParams{
 		ID:                profile.ID,
 		LastRunStatus:     pgtype.Text{String: status, Valid: true},
@@ -172,7 +184,7 @@ func (w *Worker) executeDiscovery(
 	profile dbgen.DiscoveryProfile,
 	logger *slog.Logger,
 ) (int, error) {
-	// Get port and credential from profile (now single values)
+	// Get port and credential from profile
 	port := int(profile.Port)
 	credentialID := profile.CredentialProfileID
 
@@ -193,12 +205,19 @@ func (w *Worker) executeDiscovery(
 		return 0, fmt.Errorf("failed to expand target value: %w", err)
 	}
 
+	// Get credential profile to determine protocol
+	credProfile, err := w.querier.GetCredentialProfile(ctx, credentialID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to fetch credential profile: %w", err)
+	}
+
 	logger.InfoContext(ctx, "Target expanded to IPs",
 		slog.String("target", decryptedTarget),
 		slog.Int("ip_count", len(targetIPs)),
 		slog.String("target_type", string(DetectTargetType(decryptedTarget))),
 		slog.Int("port", port),
 		slog.String("credential_id", credentialID.String()),
+		slog.String("protocol", credProfile.Protocol),
 	)
 
 	// Get handshake timeout, default to 5 seconds if not set
@@ -207,16 +226,26 @@ func (w *Worker) executeDiscovery(
 		handshakeTimeout = time.Duration(profile.PortScanTimeoutMs.Int32) * time.Millisecond
 	}
 
-	// Find pluginManager that handle this port
-	matchingPlugins := w.registry.GetByPort(port)
-	if len(matchingPlugins) == 0 {
-		return 0, fmt.Errorf("no plugin found for port %d", port)
-	}
-
-	// Get credential profile
-	credProfile, err := w.querier.GetCredentialProfile(ctx, credentialID)
-	if err != nil {
-		return 0, fmt.Errorf("failed to fetch credential profile: %w", err)
+	// Resolve plugin/protocol handler
+	// Attempt to find registered plugin for the protocol
+	var plugin *plugins.PluginInfo
+	registeredPlugin, err := w.registry.GetByProtocol(credProfile.Protocol)
+	if err == nil {
+		plugin = registeredPlugin
+	} else {
+		// If not found in registry (e.g. internal ssh/snmp), create a placeholder
+		// This ensures we can still pass a valid PluginInfo to the event handler
+		plugin = &plugins.PluginInfo{
+			Manifest: plugins.PluginManifest{
+				ID:          credProfile.Protocol,
+				Name:        credProfile.Protocol, // Use protocol as name
+				Protocol:    credProfile.Protocol,
+				DefaultPort: port,
+			},
+		}
+		logger.DebugContext(ctx, "Using internal/placeholder plugin for protocol",
+			slog.String("protocol", credProfile.Protocol),
+		)
 	}
 
 	// Get decrypted credentials
@@ -234,14 +263,15 @@ func (w *Worker) executeDiscovery(
 			return validatedCount, fmt.Errorf("discovery cancelled: %w", err)
 		}
 
-		// Delegated validation logic
-		plugin, valid := w.validateTarget(ctx, targetIP, port, creds, handshakeTimeout, matchingPlugins, logger)
+		// Delegated validation logic - pass the single resolved plugin (real or placeholder)
+		// We wrap it in a slice because validateTarget expects a list (though we only check one now)
+		validatedPlugin, valid := w.validateTarget(ctx, targetIP, port, creds, handshakeTimeout, []*plugins.PluginInfo{plugin}, logger)
 
 		if valid {
 			logger.InfoContext(ctx, "Protocol handshake succeeded",
 				slog.String("ip", targetIP),
 				slog.Int("port", port),
-				slog.String("protocol", plugin.Manifest.Protocol),
+				slog.String("protocol", validatedPlugin.Manifest.Protocol),
 				slog.String("credential_id", credentialID.String()),
 			)
 
@@ -250,7 +280,7 @@ func (w *Worker) executeDiscovery(
 			case w.events.DeviceValidated <- channels.DeviceValidatedEvent{
 				DiscoveryProfile:  profile,
 				CredentialProfile: credProfile,
-				Plugin:            plugin,
+				Plugin:            validatedPlugin,
 				IP:                targetIP,
 				Port:              port,
 			}:
@@ -276,11 +306,11 @@ func (w *Worker) validateTarget(
 	ctx context.Context,
 	ip string,
 	port int,
-	creds *pluginManager.Credentials,
+	creds *plugins.Credentials,
 	timeout time.Duration,
-	plugins []*pluginManager.PluginInfo,
+	plugins []*plugins.PluginInfo,
 	logger *slog.Logger,
-) (*pluginManager.PluginInfo, bool) {
+) (*plugins.PluginInfo, bool) {
 
 	for _, plugin := range plugins {
 		var result *HandshakeResult

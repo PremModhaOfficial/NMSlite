@@ -18,7 +18,7 @@ INSERT INTO discovery_profiles (
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7
 )
-RETURNING id, name, target_value, port, port_scan_timeout_ms, credential_profile_id, last_run_at, last_run_status, devices_discovered, created_at, updated_at, deleted_at, auto_provision, auto_run
+RETURNING id, name, target_value, port, port_scan_timeout_ms, credential_profile_id, last_run_at, last_run_status, devices_discovered, created_at, updated_at, auto_provision, auto_run
 `
 
 type CreateDiscoveryProfileParams struct {
@@ -54,7 +54,6 @@ func (q *Queries) CreateDiscoveryProfile(ctx context.Context, arg CreateDiscover
 		&i.DevicesDiscovered,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 		&i.AutoProvision,
 		&i.AutoRun,
 	)
@@ -62,8 +61,7 @@ func (q *Queries) CreateDiscoveryProfile(ctx context.Context, arg CreateDiscover
 }
 
 const deleteDiscoveryProfile = `-- name: DeleteDiscoveryProfile :exec
-UPDATE discovery_profiles
-SET deleted_at = NOW()
+DELETE FROM discovery_profiles
 WHERE id = $1
 `
 
@@ -73,8 +71,8 @@ func (q *Queries) DeleteDiscoveryProfile(ctx context.Context, id uuid.UUID) erro
 }
 
 const getDiscoveryProfile = `-- name: GetDiscoveryProfile :one
-SELECT id, name, target_value, port, port_scan_timeout_ms, credential_profile_id, last_run_at, last_run_status, devices_discovered, created_at, updated_at, deleted_at, auto_provision, auto_run FROM discovery_profiles
-WHERE id = $1 AND deleted_at IS NULL
+SELECT id, name, target_value, port, port_scan_timeout_ms, credential_profile_id, last_run_at, last_run_status, devices_discovered, created_at, updated_at, auto_provision, auto_run FROM discovery_profiles
+WHERE id = $1
 `
 
 func (q *Queries) GetDiscoveryProfile(ctx context.Context, id uuid.UUID) (DiscoveryProfile, error) {
@@ -92,7 +90,6 @@ func (q *Queries) GetDiscoveryProfile(ctx context.Context, id uuid.UUID) (Discov
 		&i.DevicesDiscovered,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 		&i.AutoProvision,
 		&i.AutoRun,
 	)
@@ -100,8 +97,7 @@ func (q *Queries) GetDiscoveryProfile(ctx context.Context, id uuid.UUID) (Discov
 }
 
 const listDiscoveryProfiles = `-- name: ListDiscoveryProfiles :many
-SELECT id, name, target_value, port, port_scan_timeout_ms, credential_profile_id, last_run_at, last_run_status, devices_discovered, created_at, updated_at, deleted_at, auto_provision, auto_run FROM discovery_profiles
-WHERE deleted_at IS NULL
+SELECT id, name, target_value, port, port_scan_timeout_ms, credential_profile_id, last_run_at, last_run_status, devices_discovered, created_at, updated_at, auto_provision, auto_run FROM discovery_profiles
 ORDER BY created_at DESC
 `
 
@@ -126,7 +122,6 @@ func (q *Queries) ListDiscoveryProfiles(ctx context.Context) ([]DiscoveryProfile
 			&i.DevicesDiscovered,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.DeletedAt,
 			&i.AutoProvision,
 			&i.AutoRun,
 		); err != nil {
@@ -151,8 +146,8 @@ SET
     auto_provision = $7,
     auto_run = $8,
     updated_at = NOW()
-WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, name, target_value, port, port_scan_timeout_ms, credential_profile_id, last_run_at, last_run_status, devices_discovered, created_at, updated_at, deleted_at, auto_provision, auto_run
+WHERE id = $1
+RETURNING id, name, target_value, port, port_scan_timeout_ms, credential_profile_id, last_run_at, last_run_status, devices_discovered, created_at, updated_at, auto_provision, auto_run
 `
 
 type UpdateDiscoveryProfileParams struct {
@@ -190,7 +185,6 @@ func (q *Queries) UpdateDiscoveryProfile(ctx context.Context, arg UpdateDiscover
 		&i.DevicesDiscovered,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 		&i.AutoProvision,
 		&i.AutoRun,
 	)
@@ -204,7 +198,7 @@ SET
     last_run_status = $2,
     devices_discovered = $3,
     updated_at = NOW()
-WHERE id = $1 AND deleted_at IS NULL
+WHERE id = $1
 `
 
 type UpdateDiscoveryProfileStatusParams struct {

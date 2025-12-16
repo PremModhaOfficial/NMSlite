@@ -3,10 +3,8 @@ package common
 import (
 	"context"
 	"net/http"
-	"time"
 
 	"github.com/google/uuid"
-	"github.com/nmslite/nmslite/internal/channels"
 )
 
 // CRUDHandler provides a generic implementation for standard CRUD API endpoints
@@ -67,9 +65,9 @@ func (h *CRUDHandler[T]) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if h.CacheType != "" && h.Deps.Events != nil {
-		h.invalidateCache(h.CacheType, uuid.Nil)
-	}
+	// 	if h.CacheType != "" && h.Deps.Events != nil {
+	// 		h.invalidateCache(h.CacheType, uuid.Nil)
+	// 	}
 
 	SendJSON(w, http.StatusCreated, item)
 }
@@ -116,9 +114,9 @@ func (h *CRUDHandler[T]) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if h.CacheType != "" {
-		h.invalidateCache(h.CacheType, id)
-	}
+	// 	if h.CacheType != "" {
+	// 		h.invalidateCache(h.CacheType, id)
+	// 	}
 
 	SendJSON(w, http.StatusOK, item)
 }
@@ -140,27 +138,20 @@ func (h *CRUDHandler[T]) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if h.CacheType != "" {
-		h.invalidateCache(h.CacheType, id)
-	}
+	// 	if h.CacheType != "" {
+	// 		h.invalidateCache(h.CacheType, id)
+	// 	}
 
 	SendJSON(w, http.StatusNoContent, nil)
 }
 
-func (h *CRUDHandler[T]) invalidateCache(entityType string, id uuid.UUID) {
-	if h.Deps.Events == nil {
-		return
-	}
-	select {
-	case h.Deps.Events.CacheInvalidate <- channels.CacheInvalidateEvent{
-		EntityType: entityType,
-		EntityID:   id,
-		Timestamp:  time.Now(),
-	}:
-	default:
-		if h.Deps.Logger != nil {
-			h.Deps.Logger.Warn("Failed to emit cache invalidation event",
-				"entity_type", entityType, "id", id)
-		}
-	}
-}
+// func (h *CRUDHandler[T]) invalidateCache(entityType string, id uuid.UUID) {
+// 	if h.Deps.Events == nil {
+// 		return
+// 	}
+// 	h.Deps.Events.CacheInvalidate <- channels.CacheInvalidateEvent{
+// 		EntityType: entityType,
+// 		EntityID:   id,
+// 		Timestamp:  time.Now(),
+// 	}
+// }

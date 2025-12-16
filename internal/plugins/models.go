@@ -1,4 +1,4 @@
-package pluginManager
+package plugins
 
 // Credentials for authentication
 type Credentials struct {

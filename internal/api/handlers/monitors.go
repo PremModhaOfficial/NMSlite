@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/nmslite/nmslite/internal/api/common"
+	"github.com/nmslite/nmslite/internal/channels"
 	"github.com/nmslite/nmslite/internal/database/dbgen"
 )
 
@@ -20,18 +21,76 @@ func NewMonitorHandler(deps *common.Dependencies) *MonitorHandler {
 	h := &MonitorHandler{}
 
 	h.CRUDHandler = &common.CRUDHandler[dbgen.Monitor]{
-		Deps:      deps,
-		Name:      "Monitor",
-		CacheType: "monitor",
+		Deps: deps,
+		Name: "Monitor",
+		// CacheType removed, manual handling below
 	}
 
+	// Wrap generic functions to add Push-Model Cache Invalidation
 	h.ListFunc = h.list
-	h.CreateFunc = h.create
+
+	// Create: generic create -> fetch full data -> push event
+	h.CreateFunc = func(ctx context.Context, input dbgen.Monitor) (dbgen.Monitor, error) {
+		m, err := h.create(ctx, input)
+		if err == nil {
+			h.pushUpdate(ctx, m.ID)
+		}
+		return m, err
+	}
+
 	h.GetFunc = h.get
-	h.UpdateFunc = h.update
-	h.DeleteFunc = h.delete
+
+	// Update: generic update -> fetch full data -> push event
+	h.UpdateFunc = func(ctx context.Context, id uuid.UUID, input dbgen.Monitor) (dbgen.Monitor, error) {
+		m, err := h.update(ctx, id, input)
+		if err == nil {
+			h.pushUpdate(ctx, m.ID)
+		}
+		return m, err
+	}
+
+	// Delete: generic delete -> push delete event
+	h.DeleteFunc = func(ctx context.Context, id uuid.UUID) error {
+		err := h.delete(ctx, id)
+		if err == nil {
+			h.pushDelete(ctx, id)
+		}
+		return err
+	}
 
 	return h
+}
+
+// pushUpdate fetches the joined monitor data and sends it to the scheduler
+func (h *MonitorHandler) pushUpdate(ctx context.Context, id uuid.UUID) {
+	if h.Deps.Events == nil {
+		return
+	}
+	row, err := h.Deps.Q.GetMonitorWithCredentials(ctx, id)
+	if err != nil {
+		// Log but don't fail the request?
+		// The generic handler uses h.Deps.Logger usually, but CRUDHandler doesn't expose it directly as public field?
+		// Deps is public.
+		if h.Deps.Logger != nil {
+			h.Deps.Logger.Error("failed to fetch monitor for cache push", "monitor_id", id, "error", err)
+		}
+		return
+	}
+	h.Deps.Events.CacheInvalidate <- channels.CacheInvalidateEvent{
+		UpdateType: "update",
+		Monitors:   []dbgen.GetMonitorWithCredentialsRow{row},
+	}
+}
+
+// pushDelete sends a delete signal to the scheduler
+func (h *MonitorHandler) pushDelete(ctx context.Context, id uuid.UUID) {
+	if h.Deps.Events == nil {
+		return
+	}
+	h.Deps.Events.CacheInvalidate <- channels.CacheInvalidateEvent{
+		UpdateType: "delete",
+		MonitorIDs: []uuid.UUID{id},
+	}
 }
 
 func (h *MonitorHandler) list(ctx context.Context) ([]dbgen.Monitor, error) {
@@ -140,10 +199,6 @@ func (h *MonitorHandler) update(ctx context.Context, id uuid.UUID, input dbgen.M
 
 func (h *MonitorHandler) delete(ctx context.Context, id uuid.UUID) error {
 	return h.Deps.Q.DeleteMonitor(ctx, id)
-}
-
-func (h *MonitorHandler) Restore(w http.ResponseWriter, r *http.Request) {
-	common.SendError(w, r, http.StatusNotImplemented, "NOT_IMPLEMENTED", "This endpoint is not yet implemented", nil)
 }
 
 // Metrics Query Logic

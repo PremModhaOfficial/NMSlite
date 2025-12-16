@@ -18,10 +18,9 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/nmslite/nmslite/internal/auth"
 	"github.com/nmslite/nmslite/internal/channels"
-	"github.com/nmslite/nmslite/internal/credentials"
 	"github.com/nmslite/nmslite/internal/database/dbgen"
 	"github.com/nmslite/nmslite/internal/globals"
-	"github.com/nmslite/nmslite/internal/pluginManager"
+	"github.com/nmslite/nmslite/internal/plugins"
 )
 
 // MockQuerier is a minimal mock for the test
@@ -111,12 +110,12 @@ echo '[{"request_id": "req-1", "status": "success", "result": {}}]'
 	// Create scheduler dependencies
 	eventChans := channels.NewEventChannels()
 
-	registry := pluginManager.NewRegistry(tmpDir)
+	registry := plugins.NewRegistry(tmpDir)
 	if err := registry.Scan(); err != nil {
 		t.Fatalf("failed to scan registry: %v", err)
 	}
 
-	executor := pluginManager.NewExecutor(registry, 2*time.Second)
+	executor := plugins.NewExecutor(registry, 2*time.Second)
 
 	// Mock DB
 	monID := uuid.New()
@@ -143,7 +142,7 @@ echo '[{"request_id": "req-1", "status": "success", "result": {}}]'
 	}
 
 	// Encrypt credentials manually
-	creds := &pluginManager.Credentials{
+	creds := &plugins.Credentials{
 		Username: "user",
 		Password: "password",
 	}
@@ -156,7 +155,7 @@ echo '[{"request_id": "req-1", "status": "success", "result": {}}]'
 
 	// Re-create cred service with mock querier if needed, but ensureCredentials only decrypts
 	// Scheduler uses credService which uses its own querier?
-	// credentials.Service has a querier field.
+	// auth.Service has a querier field.
 	// We can pass the mockQuerier to it too.
 
 	mockQuerier := &MockQuerier{
@@ -170,14 +169,14 @@ echo '[{"request_id": "req-1", "status": "success", "result": {}}]'
 				PollingIntervalSeconds: pgtype.Int4{Int32: 1, Valid: true}, // 1 second interval, but we override tick
 				Status:                 pgtype.Text{String: "active", Valid: true},
 				CreatedAt:              pgtype.Timestamptz{Time: time.Now(), Valid: true},
-				CredentialData:         encrypted,
+				Payload:                encrypted,
 				Port:                   pgtype.Int4{Int32: port, Valid: true},
 			},
 		},
 	}
 
 	// Re-create cred service with mock querier
-	credService := credentials.NewService(authSvc, mockQuerier)
+	credService := auth.NewCredentialService(authSvc, mockQuerier)
 
 	scheduler := NewSchedulerImpl(
 		mockQuerier,

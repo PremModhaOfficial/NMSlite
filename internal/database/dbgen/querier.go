@@ -32,6 +32,13 @@ type Querier interface {
 	// Query metrics for devices with prefix matching (SNMP subtree style)
 	GetMetricsByDeviceAndPrefix(ctx context.Context, arg GetMetricsByDeviceAndPrefixParams) ([]Metric, error)
 	GetMonitor(ctx context.Context, id uuid.UUID) (Monitor, error)
+	// Fetches a single monitor with its credential data.
+	// Used for efficient cache invalidation.
+	GetMonitorWithCredentials(ctx context.Context, id uuid.UUID) (GetMonitorWithCredentialsRow, error)
+	GetMonitorsByCredentialID(ctx context.Context, credentialProfileID uuid.UUID) ([]uuid.UUID, error)
+	// Fetches all monitors using a specific credential profile, with their credential data.
+	// Used for efficient cache invalidation when a credential profile changes.
+	GetMonitorsWithCredentialsByCredentialID(ctx context.Context, credentialProfileID uuid.UUID) ([]GetMonitorsWithCredentialsByCredentialIDRow, error)
 	// Loads active monitors with their credential data in a single query.
 	// Used by scheduler to initialize cache at startup.
 	ListActiveMonitorsWithCredentials(ctx context.Context) ([]ListActiveMonitorsWithCredentialsRow, error)

@@ -1,4 +1,4 @@
-package middleware
+package auth
 
 import (
 	"context"
@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/nmslite/nmslite/internal/auth"
 )
 
 type contextKey string
@@ -104,7 +103,7 @@ func CORS(allowedOrigins, allowedMethods, allowedHeaders []string, maxAge int) f
 }
 
 // JWTAuth middleware validates JWT tokens
-func JWTAuth(authService *auth.Service) func(http.Handler) http.Handler {
+func JWTAuth(authService *Service) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Extract token from Authorization header

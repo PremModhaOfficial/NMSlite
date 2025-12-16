@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/nmslite/nmslite/internal/database/dbgen"
 	"github.com/nmslite/nmslite/internal/globals"
-	"github.com/nmslite/nmslite/internal/pluginManager"
+	"github.com/nmslite/nmslite/internal/plugins"
 )
 
 // DiscoveryRequestEvent is published when a discovery begins execution
@@ -30,7 +30,7 @@ type DiscoveryStatusEvent struct {
 type DeviceValidatedEvent struct {
 	DiscoveryProfile  dbgen.DiscoveryProfile
 	CredentialProfile dbgen.CredentialProfile
-	Plugin            *pluginManager.PluginInfo
+	Plugin            *plugins.PluginInfo
 	IP                string
 	Port              int
 }
@@ -55,10 +55,11 @@ type PluginEvent struct {
 }
 
 // CacheInvalidateEvent signals cache entries need refresh
+// CacheInvalidateEvent signals cache entries need refresh
 type CacheInvalidateEvent struct {
-	EntityType string // "credential", "monitor", "discovery"
-	EntityID   uuid.UUID
-	Timestamp  time.Time
+	UpdateType string                               // "update", "delete"
+	Monitors   []dbgen.GetMonitorWithCredentialsRow // For "update"
+	MonitorIDs []uuid.UUID                          // For "delete"
 }
 
 // EventChannelsConfig configures buffer sizes for event channels

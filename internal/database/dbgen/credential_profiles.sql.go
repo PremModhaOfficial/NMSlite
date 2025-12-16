@@ -18,18 +18,18 @@ INSERT INTO credential_profiles (
     name,
     description,
     protocol,
-    credential_data
+    payload
 ) VALUES (
     $1, $2, $3, $4
 )
-RETURNING id, name, description, protocol, credential_data, created_at, updated_at, deleted_at
+RETURNING id, name, description, protocol, payload, created_at, updated_at
 `
 
 type CreateCredentialProfileParams struct {
-	Name           string          `json:"name"`
-	Description    pgtype.Text     `json:"description"`
-	Protocol       string          `json:"protocol"`
-	CredentialData json.RawMessage `json:"credential_data"`
+	Name        string          `json:"name"`
+	Description pgtype.Text     `json:"description"`
+	Protocol    string          `json:"protocol"`
+	Payload     json.RawMessage `json:"payload"`
 }
 
 func (q *Queries) CreateCredentialProfile(ctx context.Context, arg CreateCredentialProfileParams) (CredentialProfile, error) {
@@ -37,7 +37,7 @@ func (q *Queries) CreateCredentialProfile(ctx context.Context, arg CreateCredent
 		arg.Name,
 		arg.Description,
 		arg.Protocol,
-		arg.CredentialData,
+		arg.Payload,
 	)
 	var i CredentialProfile
 	err := row.Scan(
@@ -45,17 +45,15 @@ func (q *Queries) CreateCredentialProfile(ctx context.Context, arg CreateCredent
 		&i.Name,
 		&i.Description,
 		&i.Protocol,
-		&i.CredentialData,
+		&i.Payload,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const deleteCredentialProfile = `-- name: DeleteCredentialProfile :exec
-UPDATE credential_profiles
-SET deleted_at = NOW()
+DELETE FROM credential_profiles
 WHERE id = $1
 `
 
@@ -65,8 +63,8 @@ func (q *Queries) DeleteCredentialProfile(ctx context.Context, id uuid.UUID) err
 }
 
 const getCredentialProfile = `-- name: GetCredentialProfile :one
-SELECT id, name, description, protocol, credential_data, created_at, updated_at, deleted_at FROM credential_profiles
-WHERE id = $1 AND deleted_at IS NULL LIMIT 1
+SELECT id, name, description, protocol, payload, created_at, updated_at FROM credential_profiles
+WHERE id = $1 LIMIT 1
 `
 
 func (q *Queries) GetCredentialProfile(ctx context.Context, id uuid.UUID) (CredentialProfile, error) {
@@ -77,17 +75,15 @@ func (q *Queries) GetCredentialProfile(ctx context.Context, id uuid.UUID) (Crede
 		&i.Name,
 		&i.Description,
 		&i.Protocol,
-		&i.CredentialData,
+		&i.Payload,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const listCredentialProfiles = `-- name: ListCredentialProfiles :many
-SELECT id, name, description, protocol, credential_data, created_at, updated_at, deleted_at FROM credential_profiles
-WHERE deleted_at IS NULL
+SELECT id, name, description, protocol, payload, created_at, updated_at FROM credential_profiles
 ORDER BY name
 `
 
@@ -105,10 +101,9 @@ func (q *Queries) ListCredentialProfiles(ctx context.Context) ([]CredentialProfi
 			&i.Name,
 			&i.Description,
 			&i.Protocol,
-			&i.CredentialData,
+			&i.Payload,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -126,18 +121,18 @@ SET
     name = $2,
     description = $3,
     protocol = $4,
-    credential_data = $5,
+    payload = $5,
     updated_at = NOW()
-WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, name, description, protocol, credential_data, created_at, updated_at, deleted_at
+WHERE id = $1
+RETURNING id, name, description, protocol, payload, created_at, updated_at
 `
 
 type UpdateCredentialProfileParams struct {
-	ID             uuid.UUID       `json:"id"`
-	Name           string          `json:"name"`
-	Description    pgtype.Text     `json:"description"`
-	Protocol       string          `json:"protocol"`
-	CredentialData json.RawMessage `json:"credential_data"`
+	ID          uuid.UUID       `json:"id"`
+	Name        string          `json:"name"`
+	Description pgtype.Text     `json:"description"`
+	Protocol    string          `json:"protocol"`
+	Payload     json.RawMessage `json:"payload"`
 }
 
 func (q *Queries) UpdateCredentialProfile(ctx context.Context, arg UpdateCredentialProfileParams) (CredentialProfile, error) {
@@ -146,7 +141,7 @@ func (q *Queries) UpdateCredentialProfile(ctx context.Context, arg UpdateCredent
 		arg.Name,
 		arg.Description,
 		arg.Protocol,
-		arg.CredentialData,
+		arg.Payload,
 	)
 	var i CredentialProfile
 	err := row.Scan(
@@ -154,10 +149,9 @@ func (q *Queries) UpdateCredentialProfile(ctx context.Context, arg UpdateCredent
 		&i.Name,
 		&i.Description,
 		&i.Protocol,
-		&i.CredentialData,
+		&i.Payload,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }

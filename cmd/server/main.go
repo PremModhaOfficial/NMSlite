@@ -17,12 +17,11 @@ import (
 	"github.com/nmslite/nmslite/internal/api"
 	"github.com/nmslite/nmslite/internal/auth"
 	"github.com/nmslite/nmslite/internal/channels"
-	"github.com/nmslite/nmslite/internal/credentials"
 	"github.com/nmslite/nmslite/internal/database"
 	"github.com/nmslite/nmslite/internal/database/dbgen"
 	"github.com/nmslite/nmslite/internal/discovery"
 	"github.com/nmslite/nmslite/internal/globals"
-	"github.com/nmslite/nmslite/internal/pluginManager"
+	"github.com/nmslite/nmslite/internal/plugins"
 	"github.com/nmslite/nmslite/internal/poller"
 )
 
@@ -66,10 +65,17 @@ func main() {
 	// Initialize and start workers
 	pluginRegistry, pluginExecutor, credService := startDiscoveryWorker(ctx, pool, events, authService)
 	startScheduler(ctx, pool, pluginExecutor, pluginRegistry, credService, events, batchWriter)
-	channels.StartProvisionHandler(ctx, events, dbgen.New(pool), logger)
+
+	// Initialize Websocket Hub
+	hub := discovery.NewHub()
+	go hub.Run()
+
+	// Start Discovery Handlers (now in discovery package, using Hub)
+	discovery.StartProvisionHandler(ctx, events, dbgen.New(pool), hub, logger)
+	discovery.StartDiscoveryCompletionLogger(ctx, events, hub, slog.Default())
 
 	// Start HTTP server
-	srv := initHTTPServer(authService, pool, events)
+	srv := initHTTPServer(authService, pool, events, hub)
 	go startServer(srv)
 
 	// Wait for shutdown signal
@@ -130,7 +136,7 @@ func initEventChannels(ctx context.Context) *channels.EventChannels {
 		"monitor_state_buffer", cfg.Channel.StateSignalChannelSize,
 	)
 
-	channels.StartDiscoveryCompletionLogger(ctx, events, slog.Default())
+	// Note: Discovery Completion Logger is now started later with the Hub
 	return events
 }
 
@@ -153,12 +159,12 @@ func initBatchWriter(ctx context.Context, pool *pgxpool.Pool) *poller.BatchWrite
 	return batchWriter
 }
 
-func startDiscoveryWorker(ctx context.Context, db *pgxpool.Pool, events *channels.EventChannels, authService *auth.Service) (*pluginManager.Registry, *pluginManager.Executor, *credentials.Service) {
+func startDiscoveryWorker(ctx context.Context, db *pgxpool.Pool, events *channels.EventChannels, authService *auth.Service) (*plugins.Registry, *plugins.Executor, *auth.CredentialService) {
 	cfg := globals.GetConfig()
 	logger := slog.Default()
 
 	// Initialize Plugin Registry
-	pluginRegistry := pluginManager.NewRegistry(cfg.Plugins.Directory)
+	pluginRegistry := plugins.NewRegistry(cfg.Plugins.Directory)
 	if err := pluginRegistry.Scan(); err != nil {
 		logger.Error("Failed to scan pluginManager", "error", err)
 	} else {
@@ -175,13 +181,13 @@ func startDiscoveryWorker(ctx context.Context, db *pgxpool.Pool, events *channel
 	}
 
 	// Initialize Plugin Executor
-	pluginExecutor := pluginManager.NewExecutor(
+	pluginExecutor := plugins.NewExecutor(
 		pluginRegistry,
 		time.Duration(cfg.Poller.PluginTimeoutMS)*time.Millisecond,
 	)
 
 	// Initialize services
-	credentialService := credentials.NewService(authService, dbgen.New(db))
+	credentialService := auth.NewCredentialService(authService, dbgen.New(db))
 	discoveryWorker := discovery.NewWorker(
 		events,
 		dbgen.New(db),
@@ -205,9 +211,9 @@ func startDiscoveryWorker(ctx context.Context, db *pgxpool.Pool, events *channel
 func startScheduler(
 	ctx context.Context,
 	db *pgxpool.Pool,
-	pluginExecutor *pluginManager.Executor,
-	pluginRegistry *pluginManager.Registry,
-	credService *credentials.Service,
+	pluginExecutor *plugins.Executor,
+	pluginRegistry *plugins.Registry,
+	credService *auth.CredentialService,
 	events *channels.EventChannels,
 	batchWriter *poller.BatchWriter,
 ) {
@@ -236,9 +242,9 @@ func startScheduler(
 	)
 }
 
-func initHTTPServer(authService *auth.Service, db *pgxpool.Pool, events *channels.EventChannels) *http.Server {
+func initHTTPServer(authService *auth.Service, db *pgxpool.Pool, events *channels.EventChannels, hub *discovery.Hub) *http.Server {
 	cfg := globals.GetConfig()
-	router := api.NewRouter(authService, db, events)
+	router := api.NewRouter(authService, db, events, hub)
 	return &http.Server{
 		Addr:         fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
 		Handler:      router,

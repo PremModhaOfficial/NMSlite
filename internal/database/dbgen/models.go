@@ -13,14 +13,13 @@ import (
 )
 
 type CredentialProfile struct {
-	ID             uuid.UUID          `json:"id"`
-	Name           string             `json:"name"`
-	Description    pgtype.Text        `json:"description"`
-	Protocol       string             `json:"protocol"`
-	CredentialData json.RawMessage    `json:"credential_data"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
-	DeletedAt      pgtype.Timestamptz `json:"deleted_at"`
+	ID          uuid.UUID          `json:"id"`
+	Name        string             `json:"name"`
+	Description pgtype.Text        `json:"description"`
+	Protocol    string             `json:"protocol"`
+	Payload     json.RawMessage    `json:"payload"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
 type DiscoveredDevice struct {
@@ -45,10 +44,8 @@ type DiscoveryProfile struct {
 	DevicesDiscovered   pgtype.Int4        `json:"devices_discovered"`
 	CreatedAt           pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
-	DeletedAt           pgtype.Timestamptz `json:"deleted_at"`
 	AutoProvision       pgtype.Bool        `json:"auto_provision"`
-	// If true, discovery will run automatically on a schedule
-	AutoRun pgtype.Bool `json:"auto_run"`
+	AutoRun             pgtype.Bool        `json:"auto_run"`
 }
 
 type Metric struct {
@@ -71,6 +68,5 @@ type Monitor struct {
 	Status                 pgtype.Text        `json:"status"`
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
-	DeletedAt              pgtype.Timestamptz `json:"deleted_at"`
 	Port                   pgtype.Int4        `json:"port"`
 }

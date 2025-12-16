@@ -1,6 +1,5 @@
 -- name: ListDiscoveryProfiles :many
 SELECT * FROM discovery_profiles
-WHERE deleted_at IS NULL
 ORDER BY created_at DESC;
 
 -- name: CreateDiscoveryProfile :one
@@ -13,7 +12,7 @@ RETURNING *;
 
 -- name: GetDiscoveryProfile :one
 SELECT * FROM discovery_profiles
-WHERE id = $1 AND deleted_at IS NULL;
+WHERE id = $1;
 
 -- name: UpdateDiscoveryProfile :one
 UPDATE discovery_profiles
@@ -26,12 +25,11 @@ SET
     auto_provision = $7,
     auto_run = $8,
     updated_at = NOW()
-WHERE id = $1 AND deleted_at IS NULL
+WHERE id = $1
 RETURNING *;
 
 -- name: DeleteDiscoveryProfile :exec
-UPDATE discovery_profiles
-SET deleted_at = NOW()
+DELETE FROM discovery_profiles
 WHERE id = $1;
 
 -- name: UpdateDiscoveryProfileStatus :exec
@@ -41,4 +39,4 @@ SET
     last_run_status = $2,
     devices_discovered = $3,
     updated_at = NOW()
-WHERE id = $1 AND deleted_at IS NULL;
+WHERE id = $1;

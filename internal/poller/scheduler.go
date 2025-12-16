@@ -11,11 +11,11 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/nmslite/nmslite/internal/auth"
 	"github.com/nmslite/nmslite/internal/channels"
-	"github.com/nmslite/nmslite/internal/credentials"
 	"github.com/nmslite/nmslite/internal/database/dbgen"
 	"github.com/nmslite/nmslite/internal/globals"
-	"github.com/nmslite/nmslite/internal/pluginManager"
+	"github.com/nmslite/nmslite/internal/plugins"
 )
 
 // ScheduledMonitor wraps a dbgen.Monitor pointer with runtime scheduling state.
@@ -26,8 +26,8 @@ type ScheduledMonitor struct {
 	IsPolling           bool // True if a poll is currently in progress
 
 	// Crypto/Cache (protected by SchedulerImpl.heapMu)
-	EncryptedCredentials []byte                     // Raw JSON from DB (eager loaded)
-	Credentials          *pluginManager.Credentials // Decrypted on demand
+	EncryptedCredentials []byte               // Raw JSON from DB (eager loaded)
+	Credentials          *plugins.Credentials // Decrypted on demand
 }
 
 // PriorityQueue implements heap.Interface for *ScheduledMonitor
@@ -65,9 +65,9 @@ type SchedulerImpl struct {
 	// Dependencies
 	events         *channels.EventChannels
 	querier        dbgen.Querier
-	pluginExecutor *pluginManager.Executor
-	pluginRegistry *pluginManager.Registry
-	credService    *credentials.Service
+	pluginExecutor *plugins.Executor
+	pluginRegistry *plugins.Registry
+	credService    *auth.CredentialService
 	resultWriter   *ResultWriter
 	logger         *slog.Logger
 
@@ -97,9 +97,9 @@ type SchedulerImpl struct {
 func NewSchedulerImpl(
 	querier dbgen.Querier,
 	events *channels.EventChannels,
-	pluginExecutor *pluginManager.Executor,
-	pluginRegistry *pluginManager.Registry,
-	credService *credentials.Service,
+	pluginExecutor *plugins.Executor,
+	pluginRegistry *plugins.Registry,
+	credService *auth.CredentialService,
 	resultWriter *ResultWriter,
 ) *SchedulerImpl {
 	cfg := globals.GetConfig().Scheduler
@@ -162,14 +162,18 @@ func (s *SchedulerImpl) Run(ctx context.Context) error {
 			s.tick(ctx)
 		case event := <-s.events.CacheInvalidate:
 			s.logger.Info("received cache invalidation event",
-				"entity_type", event.EntityType,
-				"entity_id", event.EntityID,
+				"type", event.UpdateType,
+				"update_count", len(event.Monitors),
+				"delete_count", len(event.MonitorIDs),
 			)
-			switch event.EntityType {
-			case "credential":
-				s.InvalidateCredentialCache(event.EntityID)
-			case "monitor":
-				s.InvalidateMonitorCache(event.EntityID)
+			if event.UpdateType == "update" {
+				for _, row := range event.Monitors {
+					s.updateMonitorCacheFromRow(row)
+				}
+			} else if event.UpdateType == "delete" {
+				for _, id := range event.MonitorIDs {
+					s.removeMonitorFromCache(id)
+				}
 			}
 		}
 	}
@@ -201,12 +205,11 @@ func (s *SchedulerImpl) LoadActiveMonitors(ctx context.Context) error {
 			Status:                 row.Status,
 			CreatedAt:              row.CreatedAt,
 			UpdatedAt:              row.UpdatedAt,
-			DeletedAt:              row.DeletedAt,
 		}
 
 		sm := &ScheduledMonitor{
 			Monitor:              m,
-			EncryptedCredentials: row.CredentialData, // Already joined from credential_profiles
+			EncryptedCredentials: row.Payload, // Already joined from credential_profiles
 			NextPollDeadline:     time.Now(),
 		}
 		s.monitors[m.ID] = sm
@@ -411,7 +414,7 @@ func (s *SchedulerImpl) processPluginBatch(ctx context.Context, pluginID string,
 	}
 
 	// Phase 2: Build batch of poll tasks
-	tasks := make([]pluginManager.PollTask, 0, len(liveMonitors))
+	tasks := make([]plugins.PollTask, 0, len(liveMonitors))
 	monitorByRequestID := make(map[string]*ScheduledMonitor, len(liveMonitors))
 
 	for _, sm := range liveMonitors {
@@ -429,7 +432,7 @@ func (s *SchedulerImpl) processPluginBatch(ctx context.Context, pluginID string,
 		}
 
 		requestID := uuid.New().String()
-		tasks = append(tasks, pluginManager.PollTask{
+		tasks = append(tasks, plugins.PollTask{
 			RequestID:   requestID,
 			Target:      sm.Monitor.IpAddress.String(),
 			Port:        port,
@@ -473,7 +476,7 @@ func (s *SchedulerImpl) processPluginBatch(ctx context.Context, pluginID string,
 		if result.Status != "success" {
 			s.handleFailure(sm, fmt.Sprintf("plugin error: %s", result.Error))
 		} else {
-			s.handleSuccess(ctx, sm, []pluginManager.PollResult{result})
+			s.handleSuccess(ctx, sm, []plugins.PollResult{result})
 		}
 	}
 
@@ -489,7 +492,7 @@ func (s *SchedulerImpl) processPluginBatch(ctx context.Context, pluginID string,
 
 // ensureCredentials lazily loads and caches credentials for a monitor.
 // Caller should NOT hold heapMu - this function manages its own locking.
-func (s *SchedulerImpl) ensureCredentials(sm *ScheduledMonitor) (*pluginManager.Credentials, error) {
+func (s *SchedulerImpl) ensureCredentials(sm *ScheduledMonitor) (*plugins.Credentials, error) {
 	s.heapMu.Lock()
 	cred := sm.Credentials
 	if cred != nil {
@@ -515,7 +518,7 @@ func (s *SchedulerImpl) ensureCredentials(sm *ScheduledMonitor) (*pluginManager.
 }
 
 // handleSuccess processes a successful poll result
-func (s *SchedulerImpl) handleSuccess(ctx context.Context, sm *ScheduledMonitor, results []pluginManager.PollResult) {
+func (s *SchedulerImpl) handleSuccess(ctx context.Context, sm *ScheduledMonitor, results []plugins.PollResult) {
 	s.heapMu.Lock()
 	wasDown := sm.ConsecutiveFailures >= s.downThreshold
 	sm.ConsecutiveFailures = 0
@@ -630,103 +633,62 @@ func (s *SchedulerImpl) rescheduleUnlocked(sm *ScheduledMonitor) {
 	)
 }
 
-// InvalidateCredentialCache refreshes the encrypted data from DB and clears decrypted cache
-func (s *SchedulerImpl) InvalidateCredentialCache(profileID uuid.UUID) {
+// updateMonitorCacheFromRow updates a monitor in the cache from a pushed DB row
+func (s *SchedulerImpl) updateMonitorCacheFromRow(row dbgen.GetMonitorWithCredentialsRow) {
 	s.heapMu.Lock()
-	// Collect monitors to update as a batch
-	var targets []*ScheduledMonitor
-	for _, sm := range s.monitors {
-		if sm.Monitor.CredentialProfileID == profileID {
-			targets = append(targets, sm)
-		}
-	}
-	s.heapMu.Unlock()
+	defer s.heapMu.Unlock()
 
-	if len(targets) == 0 {
+	// Check status
+	if row.Status.String != "active" {
+		if _, exists := s.monitors[row.ID]; exists {
+			delete(s.monitors, row.ID)
+			s.logger.Info("removed inactive monitor from scheduler cache", "monitor_id", row.ID)
+		}
 		return
 	}
 
-	// Fetch the new encrypted data once
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	profile, err := s.querier.GetCredentialProfile(ctx, profileID)
-	var newData []byte
-	if err != nil {
-		s.logger.Error("failed to refresh invalid credentials", "profile_id", profileID, "error", err)
-		// If fail to fetch, we should probably nil out everything to prevent stale usage?
-		// Or keep old data? Let's nil out to be safe/fail-fast.
-	} else {
-		newData = profile.CredentialData
+	// Reconstruct object
+	monitor := dbgen.Monitor{
+		ID:                     row.ID,
+		DisplayName:            row.DisplayName,
+		Hostname:               row.Hostname,
+		IpAddress:              row.IpAddress,
+		PluginID:               row.PluginID,
+		CredentialProfileID:    row.CredentialProfileID,
+		DiscoveryProfileID:     row.DiscoveryProfileID,
+		Port:                   row.Port,
+		PollingIntervalSeconds: row.PollingIntervalSeconds,
+		Status:                 row.Status,
+		CreatedAt:              row.CreatedAt,
+		UpdatedAt:              row.UpdatedAt,
 	}
 
-	s.heapMu.Lock()
-	count := 0
-	for _, sm := range targets {
-		sm.EncryptedCredentials = newData // Update the source of truth
-		sm.Credentials = nil              // Clear the cache to force re-decryption next time
-		count++
+	// Update or Create
+	sm, exists := s.monitors[row.ID]
+	if !exists {
+		sm = &ScheduledMonitor{
+			NextPollDeadline: time.Now(), // Schedule immediately
+		}
+		s.monitors[row.ID] = sm
+		heap.Push(&s.heap, sm)
 	}
-	s.heapMu.Unlock()
 
-	s.logger.Info("invalidated/refreshed credential cache",
-		"credential_profile_id", profileID,
-		"monitors_affected", count,
-	)
+	sm.Monitor = &monitor
+	sm.EncryptedCredentials = row.Payload
+	sm.Credentials = nil // Force re-decryption
+
+	s.logger.Info("updated monitor in scheduler cache", "monitor_id", row.ID)
 }
 
-// InvalidateMonitorCache refreshes or removes a monitor from the scheduler cache
-func (s *SchedulerImpl) InvalidateMonitorCache(monitorID uuid.UUID) {
+// removeMonitorFromCache removes a monitor from the cache
+func (s *SchedulerImpl) removeMonitorFromCache(id uuid.UUID) {
 	s.heapMu.Lock()
-	sm, exists := s.monitors[monitorID]
-	s.heapMu.Unlock()
+	defer s.heapMu.Unlock()
 
-	if !exists {
-		s.logger.Debug("monitor not in scheduler cache, nothing to invalidate", "monitor_id", monitorID)
-		return
+	if _, exists := s.monitors[id]; exists {
+		delete(s.monitors, id)
+		s.logger.Info("removed monitor from scheduler cache", "monitor_id", id)
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	// Fetch updated monitor
-	monitor, err := s.querier.GetMonitor(ctx, monitorID)
-	if err != nil {
-		// Monitor deleted or not found - remove from cache
-		s.heapMu.Lock()
-		if _, exists := s.monitors[monitorID]; exists {
-			delete(s.monitors, monitorID)
-		}
-		s.heapMu.Unlock()
-		s.logger.Info("removed monitor from scheduler cache", "monitor_id", monitorID)
-		return
-	}
-
-	// Check if still active
-	if monitor.Status.String != "active" {
-		s.heapMu.Lock()
-		if _, exists := s.monitors[monitorID]; exists {
-			delete(s.monitors, monitorID)
-		}
-		s.heapMu.Unlock()
-		s.logger.Info("removed inactive monitor from scheduler cache", "monitor_id", monitorID)
-		return
-	}
-
-	// Fetch credential data
-	profile, err := s.querier.GetCredentialProfile(ctx, monitor.CredentialProfileID)
-	if err != nil {
-		s.logger.Error("failed to fetch credentials for monitor", "monitor_id", monitorID, "error", err)
-		return
-	}
-
-	s.heapMu.Lock()
-	sm.Monitor = &monitor
-	sm.EncryptedCredentials = profile.CredentialData
-	sm.Credentials = nil // Clear to force re-decryption
-	s.heapMu.Unlock()
-
-	s.logger.Info("refreshed monitor cache", "monitor_id", monitorID)
 }
 
 // shutdown performs graceful shutdown of the scheduler

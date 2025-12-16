@@ -8,7 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/nmslite/nmslite/internal/middleware"
+	"github.com/nmslite/nmslite/internal/auth"
 )
 
 // SendJSON sends a JSON response
@@ -22,13 +22,13 @@ func SendJSON(w http.ResponseWriter, status int, data interface{}) {
 
 // SendError sends a standardized error response
 func SendError(w http.ResponseWriter, r *http.Request, status int, code, message string, details interface{}) {
-	requestID, _ := r.Context().Value(middleware.RequestIDKey).(string)
+	requestID, _ := r.Context().Value(auth.RequestIDKey).(string)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 
-	response := middleware.ErrorResponse{
-		Error: middleware.ErrorDetail{
+	response := auth.ErrorResponse{
+		Error: auth.ErrorDetail{
 			Code:      code,
 			Message:   message,
 			Details:   details,

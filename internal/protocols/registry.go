@@ -1,9 +1,11 @@
 package protocols
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 )
 
@@ -21,6 +23,11 @@ type Protocol struct {
 	Description string `json:"description"`
 	DefaultPort int    `json:"default_port"`
 	Version     string `json:"version"`
+}
+
+// ProtocolListResponse represents the response for listing protocols
+type ProtocolListResponse struct {
+	Data []*Protocol `json:"data"`
 }
 
 var (
@@ -130,8 +137,18 @@ func (r *Registry) ValidateCredentials(protocolID string, data json.RawMessage) 
 	// Create new instance of the credential struct
 	creds := reflect.New(credType).Interface()
 
-	// Unmarshal JSON into struct
-	if err := json.Unmarshal(data, creds); err != nil {
+	// Unmarshal JSON into struct with strict validation
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(creds); err != nil {
+		if strings.Contains(err.Error(), "unknown field") {
+			return nil, &ValidationErrors{
+				Errors: []ValidationError{{
+					Field:   "_json",
+					Message: fmt.Sprintf("contains forbidden field: %v", err),
+				}},
+			}
+		}
 		return nil, &ValidationErrors{
 			Errors: []ValidationError{{
 				Field:   "_json",

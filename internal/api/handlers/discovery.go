@@ -9,15 +9,21 @@ import (
 	"github.com/nmslite/nmslite/internal/api/common"
 	"github.com/nmslite/nmslite/internal/channels"
 	"github.com/nmslite/nmslite/internal/database/dbgen"
+	"github.com/nmslite/nmslite/internal/discovery"
 )
 
 // DiscoveryHandler handles discovery profile endpoints
 type DiscoveryHandler struct {
 	*common.CRUDHandler[dbgen.DiscoveryProfile]
+	hub *discovery.Hub
+	// We need to import "github.com/nmslite/nmslite/internal/discovery" but we are in "handlers".
+	// internal/api/handlers -> internal/discovery is fine.
 }
 
-func NewDiscoveryHandler(deps *common.Dependencies) *DiscoveryHandler {
-	h := &DiscoveryHandler{}
+func NewDiscoveryHandler(deps *common.Dependencies, hub *discovery.Hub) *DiscoveryHandler {
+	h := &DiscoveryHandler{
+		hub: hub,
+	}
 
 	h.CRUDHandler = &common.CRUDHandler[dbgen.DiscoveryProfile]{
 		Deps: deps,
@@ -123,6 +129,7 @@ func triggerDiscovery(ctx context.Context, deps *common.Dependencies, id uuid.UU
 		StartedAt: time.Now(),
 	}:
 	case <-ctx.Done():
+	case <-deps.Events.Done():
 	default:
 		// Log full?
 	}
@@ -163,4 +170,9 @@ func (h *DiscoveryHandler) GetResults(w http.ResponseWriter, r *http.Request) {
 	}
 
 	common.SendListResponse(w, results, len(results))
+}
+
+// HandleWS handles websocket connections for discovery progress
+func (h *DiscoveryHandler) HandleWS(w http.ResponseWriter, r *http.Request) {
+	h.hub.ServeWs(w, r)
 }

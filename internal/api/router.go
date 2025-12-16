@@ -11,25 +11,25 @@ import (
 	"github.com/nmslite/nmslite/internal/auth"
 	"github.com/nmslite/nmslite/internal/channels"
 	"github.com/nmslite/nmslite/internal/database/dbgen"
+	"github.com/nmslite/nmslite/internal/discovery"
 	"github.com/nmslite/nmslite/internal/globals"
-	"github.com/nmslite/nmslite/internal/middleware"
 	"github.com/nmslite/nmslite/internal/protocols"
 )
 
 // NewRouter NewRouter creates and configures the API router
-func NewRouter(authService *auth.Service, db *pgxpool.Pool, events *channels.EventChannels) http.Handler {
+func NewRouter(authService *auth.Service, db *pgxpool.Pool, events *channels.EventChannels, hub *discovery.Hub) http.Handler {
 	cfg := globals.GetConfig()
 	logger := slog.Default()
 	r := chi.NewRouter()
 
-	// Global middleware
-	r.Use(middleware.RequestID)
-	r.Use(middleware.Recovery(logger))
-	r.Use(middleware.Logger(logger))
+	// Apply middleware
+	r.Use(auth.RequestID)
+	r.Use(auth.Logger(slog.Default()))
+	r.Use(auth.Recovery(slog.Default()))
 
 	// CORS (if enabled)
 	if cfg.CORS.Enabled {
-		r.Use(middleware.CORS(
+		r.Use(auth.CORS(
 			cfg.CORS.AllowedOrigins,
 			cfg.CORS.AllowedMethods,
 			cfg.CORS.AllowedHeaders,
@@ -51,12 +51,15 @@ func NewRouter(authService *auth.Service, db *pgxpool.Pool, events *channels.Eve
 	healthHandler := NewHealthHandler()
 	systemHandler := handlers.NewSystemHandler(deps)
 	credentialHandler := handlers.NewCredentialHandler(deps)
-	discoveryHandler := handlers.NewDiscoveryHandler(deps)
+	discoveryHandler := handlers.NewDiscoveryHandler(deps, hub)
 	monitorHandler := handlers.NewMonitorHandler(deps)
 
 	// Public routes (no auth required)
 	r.Get("/health", healthHandler.Health)
 	r.Get("/ready", healthHandler.Ready)
+
+	// Websocket route
+	r.Get("/ws/discovery", discoveryHandler.HandleWS)
 
 	// API v1 routes
 	r.Route("/api/v1", func(r chi.Router) {
@@ -65,7 +68,7 @@ func NewRouter(authService *auth.Service, db *pgxpool.Pool, events *channels.Eve
 
 		// Protected routes (require JWT)
 		r.Group(func(r chi.Router) {
-			r.Use(middleware.JWTAuth(authService))
+			r.Use(auth.JWTAuth(authService))
 
 			// Credential Profiles
 			r.Route("/credentials", func(r chi.Router) {
@@ -94,7 +97,7 @@ func NewRouter(authService *auth.Service, db *pgxpool.Pool, events *channels.Eve
 				r.Get("/{id}", monitorHandler.Get)
 				r.Patch("/{id}", monitorHandler.Update)
 				r.Delete("/{id}", monitorHandler.Delete)
-				r.Patch("/{id}/restore", monitorHandler.Restore)
+
 			})
 
 			// Metrics queries (batch)
