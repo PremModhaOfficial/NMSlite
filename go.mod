@@ -22,7 +22,6 @@ require (
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/gofrs/uuid v4.4.0+incompatible // indirect
-	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
 	github.com/hashicorp/go-uuid v1.0.3 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
@@ -49,6 +48,7 @@ require (
 
 require (
 	github.com/go-playground/validator/v10 v10.28.0
+	github.com/gorilla/websocket v1.5.3
 	github.com/gosnmp/gosnmp v1.37.0
 	github.com/masterzen/winrm v0.0.0-20231227165926-e811dad5ac77
 	github.com/pressly/goose/v3 v3.26.0

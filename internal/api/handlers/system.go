@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/nmslite/nmslite/internal/api/auth"
 	"github.com/nmslite/nmslite/internal/api/common"
-	"github.com/nmslite/nmslite/internal/auth"
 )
 
 type SystemHandler struct {

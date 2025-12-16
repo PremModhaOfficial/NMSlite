@@ -6,26 +6,27 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/netip"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/nmslite/nmslite/internal/auth"
-	"github.com/nmslite/nmslite/internal/channels"
+	auth2 "github.com/nmslite/nmslite/internal/api/auth"
 	"github.com/nmslite/nmslite/internal/database/dbgen"
-	"github.com/nmslite/nmslite/internal/plugins"
+	"github.com/nmslite/nmslite/internal/globals"
+	"github.com/nmslite/nmslite/internal/poller"
 )
 
 // Worker processes discovery events asynchronously.
 type Worker struct {
-	events      *channels.EventChannels
-	querier     dbgen.Querier
-	registry    *plugins.Registry
-	executor    *plugins.Executor
-	credentials *auth.CredentialService
-	authService *auth.Service
+	events        *globals.EventChannels
+	querier       dbgen.Querier
+	pluginManager *poller.PluginManager // Renamed from registry
+	// executor    *plugins.Executor - REMOVED (not used in discovery)
+	credentials *auth2.CredentialService
+	authService *auth2.Service
 	logger      *slog.Logger
 
 	// runningMu protects runningProfiles
@@ -36,19 +37,19 @@ type Worker struct {
 
 // NewWorker creates a new discovery worker instance with plugin support.
 func NewWorker(
-	events *channels.EventChannels,
+	events *globals.EventChannels,
 	querier dbgen.Querier,
-	registry *plugins.Registry,
-	executor *plugins.Executor,
-	credentials *auth.CredentialService,
-	authService *auth.Service,
+	pluginManager *poller.PluginManager,
+	// executor *plugins.Executor, - REMOVED
+	credentials *auth2.CredentialService,
+	authService *auth2.Service,
 	logger *slog.Logger,
 ) *Worker {
 	return &Worker{
-		events:          events,
-		querier:         querier,
-		registry:        registry,
-		executor:        executor,
+		events:        events,
+		querier:       querier,
+		pluginManager: pluginManager,
+		// executor:        executor,
 		credentials:     credentials,
 		authService:     authService,
 		logger:          logger,
@@ -83,7 +84,7 @@ func (w *Worker) Run(ctx context.Context) error {
 }
 
 // handleDiscoveryStartedEvent processes a single discovery start event.
-func (w *Worker) handleDiscoveryStartedEvent(ctx context.Context, event channels.DiscoveryRequestEvent) {
+func (w *Worker) handleDiscoveryStartedEvent(ctx context.Context, event globals.DiscoveryRequestEvent) {
 	logger := w.logger.With(
 		slog.String("profile_id", event.ProfileID.String()),
 		slog.String("started_at", event.StartedAt.Format(time.RFC3339)),
@@ -146,15 +147,29 @@ func (w *Worker) handleDiscoveryStartedEvent(ctx context.Context, event channels
 	}
 
 	// Execute discovery
-	monitorCount, jobErr := w.executeDiscovery(ctx, profile, logger)
+	monitorCount, totalIPs, jobErr := w.executeDiscovery(ctx, profile, logger)
 
-	// Determine final status
-	status := "success"
+	// Determine final status based on discovery results:
+	// - "success": all IPs discovered (monitorCount == totalIPs)
+	// - "partial": some devices discovered (0 < monitorCount < totalIPs)
+	// - "failed": zero devices discovered or execution error
+	var status string
 	if jobErr != nil {
 		status = "failed"
 		logger.ErrorContext(ctx, "Discovery execution failed",
 			slog.String("error", jobErr.Error()),
 		)
+	} else if monitorCount == 0 {
+		status = "failed"
+		logger.WarnContext(ctx, "Discovery completed but no devices were found")
+	} else if monitorCount < totalIPs {
+		status = "partial"
+		logger.InfoContext(ctx, "Discovery completed with partial results",
+			slog.Int("discovered", monitorCount),
+			slog.Int("total_ips", totalIPs),
+		)
+	} else {
+		status = "success"
 	}
 
 	// Update discovery profile status in database - FINAL
@@ -178,12 +193,13 @@ func (w *Worker) handleDiscoveryStartedEvent(ctx context.Context, event channels
 	)
 }
 
-// executeDiscovery runs discovery with protocol-specific handshake validation
+// executeDiscovery runs discovery with protocol-specific handshake validation.
+// Returns: (validatedCount, totalIPCount, error)
 func (w *Worker) executeDiscovery(
 	ctx context.Context,
 	profile dbgen.DiscoveryProfile,
 	logger *slog.Logger,
-) (int, error) {
+) (int, int, error) {
 	// Get port and credential from profile
 	port := int(profile.Port)
 	credentialID := profile.CredentialProfileID
@@ -202,13 +218,13 @@ func (w *Worker) executeDiscovery(
 	// Expand target into individual IPs (handles CIDR, ranges, and single IPs)
 	targetIPs, err := ExpandTarget(decryptedTarget)
 	if err != nil {
-		return 0, fmt.Errorf("failed to expand target value: %w", err)
+		return 0, 0, fmt.Errorf("failed to expand target value: %w", err)
 	}
 
 	// Get credential profile to determine protocol
 	credProfile, err := w.querier.GetCredentialProfile(ctx, credentialID)
 	if err != nil {
-		return 0, fmt.Errorf("failed to fetch credential profile: %w", err)
+		return 0, 0, fmt.Errorf("failed to fetch credential profile: %w", err)
 	}
 
 	logger.InfoContext(ctx, "Target expanded to IPs",
@@ -228,19 +244,17 @@ func (w *Worker) executeDiscovery(
 
 	// Resolve plugin/protocol handler
 	// Attempt to find registered plugin for the protocol
-	var plugin *plugins.PluginInfo
-	registeredPlugin, err := w.registry.GetByProtocol(credProfile.Protocol)
-	if err == nil {
+	var plugin *globals.PluginInfo
+	registeredPlugin, ok := w.pluginManager.Get(credProfile.Protocol)
+	if ok {
 		plugin = registeredPlugin
 	} else {
 		// If not found in registry (e.g. internal ssh/snmp), create a placeholder
 		// This ensures we can still pass a valid PluginInfo to the event handler
-		plugin = &plugins.PluginInfo{
-			Manifest: plugins.PluginManifest{
-				ID:          credProfile.Protocol,
-				Name:        credProfile.Protocol, // Use protocol as name
-				Protocol:    credProfile.Protocol,
-				DefaultPort: port,
+		plugin = &globals.PluginInfo{
+			Manifest: globals.PluginManifest{
+				Name:     credProfile.Protocol, // Use protocol as name
+				Protocol: credProfile.Protocol,
 			},
 		}
 		logger.DebugContext(ctx, "Using internal/placeholder plugin for protocol",
@@ -251,7 +265,7 @@ func (w *Worker) executeDiscovery(
 	// Get decrypted credentials
 	creds, err := w.credentials.GetDecrypted(ctx, credentialID)
 	if err != nil {
-		return 0, fmt.Errorf("failed to decrypt credentials: %w", err)
+		return 0, 0, fmt.Errorf("failed to decrypt credentials: %w", err)
 	}
 
 	validatedCount := 0
@@ -260,12 +274,12 @@ func (w *Worker) executeDiscovery(
 	for _, targetIP := range targetIPs {
 		// Check context cancellation
 		if err := ctx.Err(); err != nil {
-			return validatedCount, fmt.Errorf("discovery cancelled: %w", err)
+			return validatedCount, len(targetIPs), fmt.Errorf("discovery cancelled: %w", err)
 		}
 
 		// Delegated validation logic - pass the single resolved plugin (real or placeholder)
 		// We wrap it in a slice because validateTarget expects a list (though we only check one now)
-		validatedPlugin, hostname, valid := w.validateTarget(ctx, targetIP, port, creds, handshakeTimeout, []*plugins.PluginInfo{plugin}, logger)
+		validatedPlugin, hostname, valid := w.validateTarget(ctx, targetIP, port, creds, handshakeTimeout, []*globals.PluginInfo{plugin}, logger)
 
 		if valid {
 			logger.InfoContext(ctx, "Protocol handshake succeeded",
@@ -277,7 +291,7 @@ func (w *Worker) executeDiscovery(
 
 			// Publish DeviceValidatedEvent - handler creates DB entries
 			select {
-			case w.events.DeviceValidated <- channels.DeviceValidatedEvent{
+			case w.events.DeviceValidated <- globals.DeviceValidatedEvent{
 				DiscoveryProfile:  profile,
 				CredentialProfile: credProfile,
 				Plugin:            validatedPlugin,
@@ -287,7 +301,7 @@ func (w *Worker) executeDiscovery(
 			}:
 				validatedCount++
 			case <-ctx.Done():
-				return validatedCount, ctx.Err()
+				return validatedCount, len(targetIPs), ctx.Err()
 			default:
 				logger.WarnContext(ctx, "DeviceValidated channel full, event dropped")
 			}
@@ -299,7 +313,7 @@ func (w *Worker) executeDiscovery(
 		}
 	}
 
-	return validatedCount, nil
+	return validatedCount, len(targetIPs), nil
 }
 
 // validateTarget attempts to validate an IP against a list of plugins
@@ -307,11 +321,11 @@ func (w *Worker) validateTarget(
 	ctx context.Context,
 	ip string,
 	port int,
-	creds *plugins.Credentials,
+	creds *auth2.Credentials,
 	timeout time.Duration,
-	plugins []*plugins.PluginInfo,
+	plugins []*globals.PluginInfo,
 	logger *slog.Logger,
-) (*plugins.PluginInfo, string, bool) {
+) (*globals.PluginInfo, string, bool) {
 
 	for _, plugin := range plugins {
 		var result *HandshakeResult
@@ -345,12 +359,12 @@ func (w *Worker) validateTarget(
 // publishCompletedEvent publishes a discovery completion event to the event bus.
 func (w *Worker) publishCompletedEvent(
 	ctx context.Context,
-	event channels.DiscoveryRequestEvent,
+	event globals.DiscoveryRequestEvent,
 	statusStr string,
 	deviceCount int,
 	_ string, // error message (reserved for future use)
 ) {
-	completedEvent := channels.DiscoveryStatusEvent{
+	completedEvent := globals.DiscoveryStatusEvent{
 		ProfileID:    event.ProfileID,
 		Status:       statusStr, // "success", "partial", "failed"
 		DevicesFound: deviceCount,
@@ -377,4 +391,98 @@ func (w *Worker) publishCompletedEvent(
 			slog.String("status", statusStr),
 		)
 	}
+}
+
+// StartDiscoveryCompletionLogger starts a goroutine that logs discovery completion events AND broadcasts them.
+func StartDiscoveryCompletionLogger(ctx context.Context, events *globals.EventChannels, hub *Hub, logger *slog.Logger) {
+	go func() {
+		for {
+			select {
+			case event, ok := <-events.DiscoveryStatus:
+				if !ok {
+					return
+				}
+				logger.InfoContext(ctx, "Discovery completed",
+					slog.String("profile_id", event.ProfileID.String()),
+					slog.String("status", event.Status),
+					slog.Int("devices_found", event.DevicesFound),
+					slog.String("duration", event.CompletedAt.Sub(event.StartedAt).String()),
+				)
+
+				// Broadcast to websocket
+				hub.Broadcast("status_change", event.ProfileID, map[string]interface{}{
+					"status":        event.Status,
+					"devices_found": event.DevicesFound,
+					"duration":      event.CompletedAt.Sub(event.StartedAt).String(),
+				})
+
+			case <-ctx.Done():
+				return
+			case <-events.Done():
+				return
+			}
+		}
+	}()
+}
+
+// StartProvisionHandler listens for DeviceValidatedEvent, creates DB entries, and broadcasts.
+func StartProvisionHandler(ctx context.Context, events *globals.EventChannels, querier dbgen.Querier, hub *Hub, logger *slog.Logger, provisioner *Provisioner) {
+	go func() {
+		for {
+			select {
+			case event, ok := <-events.DeviceValidated:
+				if !ok {
+					return
+				}
+
+				logger.InfoContext(ctx, "Device validated, creating discovered_devices entry",
+					slog.String("ip", event.IP),
+					slog.Int("port", event.Port),
+					slog.String("protocol", event.Plugin.Manifest.Protocol),
+				)
+
+				// Broadcast device found event immediately
+				hub.Broadcast("device_found", event.DiscoveryProfile.ID, map[string]interface{}{
+					"ip":       event.IP,
+					"port":     event.Port,
+					"protocol": event.Plugin.Manifest.Protocol,
+					"plugin":   event.Plugin.Manifest.Name,
+				})
+
+				// 1. Create discovered_devices entry
+				_, err := querier.CreateDiscoveredDevice(ctx, dbgen.CreateDiscoveredDeviceParams{
+					DiscoveryProfileID: uuid.NullUUID{UUID: event.DiscoveryProfile.ID, Valid: true},
+					IpAddress:          netip.MustParseAddr(event.IP),
+					Port:               int32(event.Port),
+					Status:             pgtype.Text{String: "validated", Valid: true},
+				})
+				if err != nil {
+					logger.ErrorContext(ctx, "Failed to create discovered_devices entry",
+						slog.String("ip", event.IP),
+						slog.String("error", err.Error()),
+					)
+					continue
+				}
+
+				// 2. If auto_provision → Use Provisioner
+				if event.DiscoveryProfile.AutoProvision.Valid && event.DiscoveryProfile.AutoProvision.Bool {
+					if err := provisioner.ProvisionFromEvent(ctx, event); err != nil {
+						logger.ErrorContext(ctx, "Failed to auto-provision monitor",
+							slog.String("error", err.Error()),
+							slog.String("ip", event.IP),
+						)
+					} else {
+						logger.InfoContext(ctx, "Monitor created via auto-provision",
+							slog.String("ip", event.IP),
+						)
+					}
+				}
+
+			case <-ctx.Done():
+				return
+			case <-events.Done():
+				return
+			}
+		}
+	}()
 }

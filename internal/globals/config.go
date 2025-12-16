@@ -239,18 +239,18 @@ func applyEnvOverrides(cfg *Config) {
 	}
 }
 
-// GetReadTimeout returns the read timeout as a duration
-func (s *ServerConfig) GetReadTimeout() time.Duration {
+// ReadTimeout returns the read timeout as a duration
+func (s *ServerConfig) ReadTimeout() time.Duration {
 	return time.Duration(s.ReadTimeoutMS) * time.Millisecond
 }
 
-// GetWriteTimeout returns the write timeout as a duration
-func (s *ServerConfig) GetWriteTimeout() time.Duration {
+// WriteTimeout returns the write timeout as a duration
+func (s *ServerConfig) WriteTimeout() time.Duration {
 	return time.Duration(s.WriteTimeoutMS) * time.Millisecond
 }
 
-// GetConnString returns the PostgreSQL connection string in postgres:// URL format
-func (d *DatabaseConfig) GetConnString() string {
+// ConnString returns the PostgreSQL connection string in postgres:// URL format
+func (d *DatabaseConfig) ConnString() string {
 	u := &url.URL{
 		Scheme: "postgres",
 		User:   url.UserPassword(d.User, d.Password),
@@ -287,23 +287,23 @@ func (p *PoolConfig) ApplyDefaults() {
 	}
 }
 
-// GetMaxConnLifetime returns the max connection lifetime as a duration
-func (p *PoolConfig) GetMaxConnLifetime() time.Duration {
+// MaxConnLifetime returns the max connection lifetime as a duration
+func (p *PoolConfig) MaxConnLifetime() time.Duration {
 	return time.Duration(p.MaxConnLifetimeMinutes) * time.Minute
 }
 
-// GetMaxConnIdleTime returns the max connection idle time as a duration
-func (p *PoolConfig) GetMaxConnIdleTime() time.Duration {
+// MaxConnIdleTime returns the max connection idle time as a duration
+func (p *PoolConfig) MaxConnIdleTime() time.Duration {
 	return time.Duration(p.MaxConnIdleTimeMinutes) * time.Minute
 }
 
-// GetHealthCheckPeriod returns the health check period as a duration
-func (p *PoolConfig) GetHealthCheckPeriod() time.Duration {
+// HealthCheckPeriod returns the health check period as a duration
+func (p *PoolConfig) HealthCheckPeriod() time.Duration {
 	return time.Duration(p.HealthCheckPeriodSeconds) * time.Second
 }
 
-// GetJWTExpiry returns JWT expiry as duration
-func (a *AuthConfig) GetJWTExpiry() time.Duration {
+// JWTExpiry returns JWT expiry as duration
+func (a *AuthConfig) JWTExpiry() time.Duration {
 	return time.Duration(a.JWTExpiryHours) * time.Hour
 }
 
@@ -313,18 +313,18 @@ func (l *LoggingConfig) IsLogLevelValid() bool {
 	return slices.Contains(validLevels, strings.ToLower(l.Level))
 }
 
-// GetTickInterval returns the tick interval as a duration
-func (s *SchedulerConfig) GetTickInterval() time.Duration {
+// TickInterval returns the tick interval as a duration
+func (s *SchedulerConfig) TickInterval() time.Duration {
 	return time.Duration(s.TickIntervalMS) * time.Millisecond
 }
 
-// GetLivenessTimeout returns the liveness timeout as a duration
-func (s *SchedulerConfig) GetLivenessTimeout() time.Duration {
+// LivenessTimeout returns the liveness timeout as a duration
+func (s *SchedulerConfig) LivenessTimeout() time.Duration {
 	return time.Duration(s.LivenessTimeoutMS) * time.Millisecond
 }
 
-// GetPluginTimeout returns the plugin timeout as a duration
-func (s *SchedulerConfig) GetPluginTimeout() time.Duration {
+// PluginTimeout returns the plugin timeout as a duration
+func (s *SchedulerConfig) PluginTimeout() time.Duration {
 	return time.Duration(s.PluginTimeoutMS) * time.Millisecond
 }
 

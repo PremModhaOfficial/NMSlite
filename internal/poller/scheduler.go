@@ -11,14 +11,18 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/nmslite/nmslite/internal/auth"
-	"github.com/nmslite/nmslite/internal/channels"
+	"github.com/nmslite/nmslite/internal/api/auth"
 	"github.com/nmslite/nmslite/internal/database/dbgen"
 	"github.com/nmslite/nmslite/internal/globals"
-	"github.com/nmslite/nmslite/internal/plugins"
 )
 
-// ScheduledMonitor wraps a dbgen.Monitor pointer with runtime scheduling state.
+// HeapItem represents an entry in the priority queue (just ID + deadline)
+type HeapItem struct {
+	MonitorID        uuid.UUID
+	NextPollDeadline time.Time
+}
+
+// ScheduledMonitor holds the runtime state for a monitor (stored in map, not heap)
 type ScheduledMonitor struct {
 	Monitor             *dbgen.Monitor
 	ConsecutiveFailures int
@@ -26,12 +30,12 @@ type ScheduledMonitor struct {
 	IsPolling           bool // True if a poll is currently in progress
 
 	// Crypto/Cache (protected by SchedulerImpl.heapMu)
-	EncryptedCredentials []byte               // Raw JSON from DB (eager loaded)
-	Credentials          *plugins.Credentials // Decrypted on demand
+	EncryptedCredentials []byte            // Raw JSON from DB (eager loaded)
+	Credentials          *auth.Credentials // Decrypted on demand
 }
 
-// PriorityQueue implements heap.Interface for *ScheduledMonitor
-type PriorityQueue []*ScheduledMonitor
+// PriorityQueue implements heap.Interface for *HeapItem
+type PriorityQueue []*HeapItem
 
 func (pq PriorityQueue) Len() int {
 	return len(pq)
@@ -47,7 +51,7 @@ func (pq PriorityQueue) Swap(i, j int) {
 }
 
 func (pq *PriorityQueue) Push(x interface{}) {
-	item := x.(*ScheduledMonitor)
+	item := x.(*HeapItem)
 	*pq = append(*pq, item)
 }
 
@@ -63,19 +67,15 @@ func (pq *PriorityQueue) Pop() interface{} {
 // SchedulerImpl manages the scheduling and execution of monitor polling tasks
 type SchedulerImpl struct {
 	// Dependencies
-	events         *channels.EventChannels
-	querier        dbgen.Querier
-	pluginExecutor *plugins.Executor
-	pluginRegistry *plugins.Registry
-	credService    *auth.CredentialService
-	resultWriter   *ResultWriter
-	logger         *slog.Logger
+	events        *globals.EventChannels
+	querier       dbgen.Querier
+	pluginManager *PluginManager
+	credService   *auth.CredentialService
+	resultWriter  *ResultWriter
+	logger        *slog.Logger
 
 	// Configuration
-	tickInterval    time.Duration
-	livenessTimeout time.Duration
-	pluginTimeout   time.Duration
-	downThreshold   int
+	config *globals.SchedulerConfig
 
 	// Priority queue
 	heap     PriorityQueue
@@ -96,30 +96,25 @@ type SchedulerImpl struct {
 // NewSchedulerImpl creates a new SchedulerImpl instance
 func NewSchedulerImpl(
 	querier dbgen.Querier,
-	events *channels.EventChannels,
-	pluginExecutor *plugins.Executor,
-	pluginRegistry *plugins.Registry,
+	events *globals.EventChannels,
+	pluginManager *PluginManager,
 	credService *auth.CredentialService,
 	resultWriter *ResultWriter,
 ) *SchedulerImpl {
-	cfg := globals.GetConfig().Scheduler
+	cfg := &globals.GetConfig().Scheduler
 	return &SchedulerImpl{
-		querier:         querier,
-		events:          events,
-		pluginExecutor:  pluginExecutor,
-		pluginRegistry:  pluginRegistry,
-		credService:     credService,
-		resultWriter:    resultWriter,
-		logger:          slog.Default().With("component", "scheduler"),
-		tickInterval:    cfg.GetTickInterval(),
-		livenessTimeout: cfg.GetLivenessTimeout(),
-		pluginTimeout:   cfg.GetPluginTimeout(),
-		downThreshold:   cfg.DownThreshold,
-		livenessSem:     make(chan struct{}, cfg.LivenessWorkers),
-		pluginSem:       make(chan struct{}, cfg.PluginWorkers),
-		heap:            make(PriorityQueue, 0),
-		monitors:        make(map[uuid.UUID]*ScheduledMonitor),
-		done:            make(chan struct{}),
+		querier:       querier,
+		events:        events,
+		pluginManager: pluginManager,
+		credService:   credService,
+		resultWriter:  resultWriter,
+		logger:        slog.Default().With("component", "scheduler"),
+		config:        cfg,
+		livenessSem:   make(chan struct{}, cfg.LivenessWorkers),
+		pluginSem:     make(chan struct{}, cfg.PluginWorkers),
+		heap:          make(PriorityQueue, 0),
+		monitors:      make(map[uuid.UUID]*ScheduledMonitor),
+		done:          make(chan struct{}),
 	}
 }
 
@@ -134,10 +129,10 @@ func (s *SchedulerImpl) Run(ctx context.Context) error {
 	s.runMu.Unlock()
 
 	s.logger.Info("starting scheduler",
-		"tick_interval", s.tickInterval,
-		"liveness_timeout", s.livenessTimeout,
-		"plugin_timeout", s.pluginTimeout,
-		"down_threshold", s.downThreshold,
+		"tick_interval", s.config.TickInterval(),
+		"liveness_timeout", s.config.LivenessTimeout(),
+		"plugin_timeout", s.config.PluginTimeout(),
+		"down_threshold", s.config.DownThreshold,
 	)
 
 	// Load active monitors from database
@@ -145,7 +140,7 @@ func (s *SchedulerImpl) Run(ctx context.Context) error {
 		return fmt.Errorf("failed to load monitors: %w", err)
 	}
 
-	ticker := time.NewTicker(s.tickInterval)
+	ticker := time.NewTicker(s.config.TickInterval())
 	defer ticker.Stop()
 
 	for {
@@ -207,13 +202,17 @@ func (s *SchedulerImpl) LoadActiveMonitors(ctx context.Context) error {
 			UpdatedAt:              row.UpdatedAt,
 		}
 
+		now := time.Now()
 		sm := &ScheduledMonitor{
 			Monitor:              m,
 			EncryptedCredentials: row.Payload, // Already joined from credential_profiles
-			NextPollDeadline:     time.Now(),
+			NextPollDeadline:     now,
 		}
 		s.monitors[m.ID] = sm
-		heap.Push(&s.heap, sm)
+		heap.Push(&s.heap, &HeapItem{
+			MonitorID:        m.ID,
+			NextPollDeadline: now,
+		})
 		activeCount++
 	}
 
@@ -227,7 +226,7 @@ func (s *SchedulerImpl) LoadActiveMonitors(ctx context.Context) error {
 // tick processes all monitors that are due for polling
 func (s *SchedulerImpl) tick(ctx context.Context) {
 	now := time.Now()
-	nextTick := now.Add(s.tickInterval)
+	nextTick := now.Add(s.config.TickInterval())
 
 	// Step 1: Dequeue all due monitors
 	dueMonitors := s.dequeueDueMonitors(nextTick)
@@ -251,15 +250,23 @@ func (s *SchedulerImpl) dequeueDueMonitors(nextTick time.Time) []*ScheduledMonit
 	var dueItems []*ScheduledMonitor
 
 	for len(s.heap) > 0 {
-		sm := s.heap[0]
-		if sm.NextPollDeadline.After(nextTick) {
+		heapItem := s.heap[0]
+		if heapItem.NextPollDeadline.After(nextTick) {
 			break
 		}
-		item := heap.Pop(&s.heap).(*ScheduledMonitor)
-		dueItems = append(dueItems, item)
+		heap.Pop(&s.heap)
+
+		// Lookup in map - if missing, skip (deleted/down monitor)
+		sm, exists := s.monitors[heapItem.MonitorID]
+		if !exists {
+			// Stale entry - monitor was deleted or marked down
+			continue
+		}
+
+		dueItems = append(dueItems, sm)
 
 		// Reschedule immediately so they are ready for next cycle
-		s.rescheduleUnlocked(item)
+		s.rescheduleUnlocked(sm)
 	}
 
 	return dueItems
@@ -315,7 +322,7 @@ func (s *SchedulerImpl) checkLiveness(ctx context.Context, sm *ScheduledMonitor)
 
 	target := fmt.Sprintf("%s:%d", sm.Monitor.IpAddress.String(), port)
 
-	livenessCtx, cancel := context.WithTimeout(ctx, s.livenessTimeout)
+	livenessCtx, cancel := context.WithTimeout(ctx, s.config.LivenessTimeout())
 	defer cancel()
 
 	dialer := &net.Dialer{}
@@ -340,8 +347,11 @@ func (s *SchedulerImpl) processPluginBatch(ctx context.Context, pluginID string,
 	logger := s.logger.With("plugin_id", pluginID, "batch_size", len(monitors))
 	logger.Debug("processing plugin batch")
 
-	// Verify plugin exists
-	_, ok := s.pluginRegistry.GetByID(pluginID)
+	// Verify plugin exists (using ID as Protocol for now, assuming schema stores protocol in plugin_id column or they are mapped)
+	// Note: The user said "plugins are one to one mapped to the protocol".
+	// The DB column is still 'plugin_id'. We assume here that for the scheduler grouping,
+	// checking existence via Get(pluginID) is correct if pluginID == protocol.
+	_, ok := s.pluginManager.Get(pluginID)
 	if !ok {
 		logger.Error("plugin not found")
 		for _, sm := range monitors {
@@ -414,7 +424,7 @@ func (s *SchedulerImpl) processPluginBatch(ctx context.Context, pluginID string,
 	}
 
 	// Phase 2: Build batch of poll tasks
-	tasks := make([]plugins.PollTask, 0, len(liveMonitors))
+	tasks := make([]globals.PollTask, 0, len(liveMonitors))
 	monitorByRequestID := make(map[string]*ScheduledMonitor, len(liveMonitors))
 
 	for _, sm := range liveMonitors {
@@ -432,7 +442,7 @@ func (s *SchedulerImpl) processPluginBatch(ctx context.Context, pluginID string,
 		}
 
 		requestID := uuid.New().String()
-		tasks = append(tasks, plugins.PollTask{
+		tasks = append(tasks, globals.PollTask{
 			RequestID:   requestID,
 			Target:      sm.Monitor.IpAddress.String(),
 			Port:        port,
@@ -447,12 +457,12 @@ func (s *SchedulerImpl) processPluginBatch(ctx context.Context, pluginID string,
 	}
 
 	// Phase 3: Execute plugin batch
-	pluginCtx, cancel := context.WithTimeout(ctx, s.pluginTimeout)
+	pluginCtx, cancel := context.WithTimeout(ctx, s.config.PluginTimeout())
 	defer cancel()
 
 	logger.Debug("executing plugin batch", "task_count", len(tasks))
 
-	results, err := s.pluginExecutor.Poll(pluginCtx, pluginID, tasks)
+	results, err := s.pluginManager.Poll(pluginCtx, pluginID, tasks)
 	if err != nil {
 		logger.Error("plugin batch execution failed", "error", err)
 		// Mark all as failed
@@ -476,7 +486,7 @@ func (s *SchedulerImpl) processPluginBatch(ctx context.Context, pluginID string,
 		if result.Status != "success" {
 			s.handleFailure(sm, fmt.Sprintf("plugin error: %s", result.Error))
 		} else {
-			s.handleSuccess(ctx, sm, []plugins.PollResult{result})
+			s.handleSuccess(ctx, sm, []globals.PollResult{result})
 		}
 	}
 
@@ -492,7 +502,7 @@ func (s *SchedulerImpl) processPluginBatch(ctx context.Context, pluginID string,
 
 // ensureCredentials lazily loads and caches credentials for a monitor.
 // Caller should NOT hold heapMu - this function manages its own locking.
-func (s *SchedulerImpl) ensureCredentials(sm *ScheduledMonitor) (*plugins.Credentials, error) {
+func (s *SchedulerImpl) ensureCredentials(sm *ScheduledMonitor) (*auth.Credentials, error) {
 	s.heapMu.Lock()
 	cred := sm.Credentials
 	if cred != nil {
@@ -518,9 +528,9 @@ func (s *SchedulerImpl) ensureCredentials(sm *ScheduledMonitor) (*plugins.Creden
 }
 
 // handleSuccess processes a successful poll result
-func (s *SchedulerImpl) handleSuccess(ctx context.Context, sm *ScheduledMonitor, results []plugins.PollResult) {
+func (s *SchedulerImpl) handleSuccess(ctx context.Context, sm *ScheduledMonitor, results []globals.PollResult) {
 	s.heapMu.Lock()
-	wasDown := sm.ConsecutiveFailures >= s.downThreshold
+	wasDown := sm.ConsecutiveFailures >= s.config.DownThreshold
 	sm.ConsecutiveFailures = 0
 	sm.IsPolling = false
 	s.heapMu.Unlock()
@@ -540,7 +550,7 @@ func (s *SchedulerImpl) handleSuccess(ctx context.Context, sm *ScheduledMonitor,
 
 		// Emit recovery event for external consumers
 		select {
-		case s.events.MonitorState <- channels.MonitorStateEvent{
+		case s.events.MonitorState <- globals.MonitorStateEvent{
 			MonitorID: sm.Monitor.ID,
 			IP:        sm.Monitor.IpAddress.String(),
 			EventType: "recovered",
@@ -569,7 +579,7 @@ func (s *SchedulerImpl) handleFailure(sm *ScheduledMonitor, reason string) {
 		return
 	}
 
-	wasUp := sm.ConsecutiveFailures < s.downThreshold
+	wasUp := sm.ConsecutiveFailures < s.config.DownThreshold
 	sm.ConsecutiveFailures++
 	sm.IsPolling = false
 
@@ -580,7 +590,7 @@ func (s *SchedulerImpl) handleFailure(sm *ScheduledMonitor, reason string) {
 	)
 
 	// Check if threshold reached
-	if wasUp && sm.ConsecutiveFailures >= s.downThreshold {
+	if wasUp && sm.ConsecutiveFailures >= s.config.DownThreshold {
 		// Stop tracking (stops future polling)
 		delete(s.monitors, sm.Monitor.ID)
 
@@ -591,7 +601,7 @@ func (s *SchedulerImpl) handleFailure(sm *ScheduledMonitor, reason string) {
 
 		// Emit event for external consumers
 		select {
-		case s.events.MonitorState <- channels.MonitorStateEvent{
+		case s.events.MonitorState <- globals.MonitorStateEvent{
 			MonitorID: sm.Monitor.ID,
 			IP:        sm.Monitor.IpAddress.String(),
 			EventType: "down",
@@ -601,7 +611,7 @@ func (s *SchedulerImpl) handleFailure(sm *ScheduledMonitor, reason string) {
 			s.logger.Warn("monitor is down",
 				"monitor_id", sm.Monitor.ID,
 				"ip_address", sm.Monitor.IpAddress.String(),
-				"threshold", s.downThreshold,
+				"threshold", s.config.DownThreshold,
 			)
 		default:
 			s.logger.Warn("failed to emit monitor down event: channel full",
@@ -624,7 +634,12 @@ func (s *SchedulerImpl) rescheduleUnlocked(sm *ScheduledMonitor) {
 
 	interval := time.Duration(intervalSeconds) * time.Second
 	sm.NextPollDeadline = sm.NextPollDeadline.Add(interval)
-	heap.Push(&s.heap, sm)
+
+	// Push HeapItem (ID + deadline) to heap
+	heap.Push(&s.heap, &HeapItem{
+		MonitorID:        sm.Monitor.ID,
+		NextPollDeadline: sm.NextPollDeadline,
+	})
 
 	s.logger.Debug("monitor rescheduled",
 		"monitor_id", sm.Monitor.ID,
@@ -666,11 +681,15 @@ func (s *SchedulerImpl) updateMonitorCacheFromRow(row dbgen.GetMonitorWithCreden
 	// Update or Create
 	sm, exists := s.monitors[row.ID]
 	if !exists {
+		now := time.Now()
 		sm = &ScheduledMonitor{
-			NextPollDeadline: time.Now(), // Schedule immediately
+			NextPollDeadline: now, // Schedule immediately
 		}
 		s.monitors[row.ID] = sm
-		heap.Push(&s.heap, sm)
+		heap.Push(&s.heap, &HeapItem{
+			MonitorID:        row.ID,
+			NextPollDeadline: now,
+		})
 	}
 
 	sm.Monitor = &monitor

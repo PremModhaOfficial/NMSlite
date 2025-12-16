@@ -15,13 +15,11 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nmslite/nmslite/internal/api"
-	"github.com/nmslite/nmslite/internal/auth"
-	"github.com/nmslite/nmslite/internal/channels"
+	auth2 "github.com/nmslite/nmslite/internal/api/auth"
 	"github.com/nmslite/nmslite/internal/database"
 	"github.com/nmslite/nmslite/internal/database/dbgen"
 	"github.com/nmslite/nmslite/internal/discovery"
 	"github.com/nmslite/nmslite/internal/globals"
-	"github.com/nmslite/nmslite/internal/plugins"
 	"github.com/nmslite/nmslite/internal/poller"
 )
 
@@ -63,15 +61,15 @@ func main() {
 	batchWriter := initBatchWriter(ctx, pool)
 
 	// Initialize and start workers
-	pluginRegistry, pluginExecutor, credService := startDiscoveryWorker(ctx, pool, events, authService)
-	startScheduler(ctx, pool, pluginExecutor, pluginRegistry, credService, events, batchWriter)
+	pluginManager, credService := startDiscoveryWorker(ctx, pool, events, authService)
+	startScheduler(ctx, pool, pluginManager, credService, events, batchWriter)
 
 	// Initialize Websocket Hub
 	hub := discovery.NewHub()
 	go hub.Run()
 
 	// Initialize Provisioner
-	provisioner := discovery.NewProvisioner(dbgen.New(pool), events, pluginRegistry, logger)
+	provisioner := discovery.NewProvisioner(dbgen.New(pool), events, pluginManager, logger)
 
 	// Start Discovery Handlers (now in discovery package, using Hub)
 	discovery.StartProvisionHandler(ctx, events, dbgen.New(pool), hub, logger, provisioner)
@@ -108,14 +106,14 @@ func initDatabase(ctx context.Context) *pgxpool.Pool {
 	return pool
 }
 
-func initAuthService() *auth.Service {
+func initAuthService() *auth2.Service {
 	cfg := globals.GetConfig()
-	authService, err := auth.NewService(
+	authService, err := auth2.NewService(
 		cfg.Auth.JWTSecret,
 		cfg.Auth.EncryptionKey,
 		cfg.Auth.AdminUsername,
 		cfg.Auth.AdminPassword,
-		cfg.Auth.GetJWTExpiry(),
+		cfg.Auth.JWTExpiry(),
 	)
 	if err != nil {
 		log.Fatalf("Failed to initialize auth service: %v", err)
@@ -123,9 +121,9 @@ func initAuthService() *auth.Service {
 	return authService
 }
 
-func initEventChannels(ctx context.Context) *channels.EventChannels {
+func initEventChannels(ctx context.Context) *globals.EventChannels {
 	// Refactored to use config.Get() internally in NewEventChannels
-	events := channels.NewEventChannels()
+	events := globals.NewEventChannels()
 
 	// Log what was configured (need to access config solely for logging)
 	cfg := globals.GetConfig()
@@ -162,40 +160,35 @@ func initBatchWriter(ctx context.Context, pool *pgxpool.Pool) *poller.BatchWrite
 	return batchWriter
 }
 
-func startDiscoveryWorker(ctx context.Context, db *pgxpool.Pool, events *channels.EventChannels, authService *auth.Service) (*plugins.Registry, *plugins.Executor, *auth.CredentialService) {
+func startDiscoveryWorker(ctx context.Context, db *pgxpool.Pool, events *globals.EventChannels, authService *auth2.Service) (*poller.PluginManager, *auth2.CredentialService) {
 	cfg := globals.GetConfig()
 	logger := slog.Default()
 
-	// Initialize Plugin Registry
-	pluginRegistry := plugins.NewRegistry(cfg.Plugins.Directory)
-	if err := pluginRegistry.Scan(); err != nil {
-		logger.Error("Failed to scan pluginManager", "error", err)
+	// Initialize Plugin Manager
+	pluginManager := poller.NewPluginManager(
+		cfg.Plugins.Directory,
+		time.Duration(cfg.Poller.PluginTimeoutMS)*time.Millisecond,
+	)
+
+	if err := pluginManager.Scan(); err != nil {
+		logger.Error("Failed to scan plugins", "error", err)
 	} else {
-		pluginList := pluginRegistry.List()
+		pluginList := pluginManager.List()
 		logger.Info("Plugins loaded", "count", len(pluginList))
 		for _, p := range pluginList {
 			logger.Info("Plugin registered",
-				"id", p.Manifest.ID,
 				"name", p.Manifest.Name,
-				"version", p.Manifest.Version,
-				"port", p.Manifest.DefaultPort,
+				"protocol", p.Manifest.Protocol,
 			)
 		}
 	}
 
-	// Initialize Plugin Executor
-	pluginExecutor := plugins.NewExecutor(
-		pluginRegistry,
-		time.Duration(cfg.Poller.PluginTimeoutMS)*time.Millisecond,
-	)
-
 	// Initialize services
-	credentialService := auth.NewCredentialService(authService, dbgen.New(db))
+	credentialService := auth2.NewCredentialService(authService, dbgen.New(db))
 	discoveryWorker := discovery.NewWorker(
 		events,
 		dbgen.New(db),
-		pluginRegistry,
-		pluginExecutor,
+		pluginManager,
 		credentialService,
 		authService,
 		logger,
@@ -208,16 +201,15 @@ func startDiscoveryWorker(ctx context.Context, db *pgxpool.Pool, events *channel
 		}
 	}()
 
-	return pluginRegistry, pluginExecutor, credentialService
+	return pluginManager, credentialService
 }
 
 func startScheduler(
 	ctx context.Context,
 	db *pgxpool.Pool,
-	pluginExecutor *plugins.Executor,
-	pluginRegistry *plugins.Registry,
-	credService *auth.CredentialService,
-	events *channels.EventChannels,
+	pluginManager *poller.PluginManager,
+	credService *auth2.CredentialService,
+	events *globals.EventChannels,
 	batchWriter *poller.BatchWriter,
 ) {
 	resultWriter := poller.NewResultWriter(batchWriter)
@@ -225,8 +217,7 @@ func startScheduler(
 	scheduler := poller.NewSchedulerImpl(
 		dbgen.New(db), // Wrap pool with sqlc querier - pool is still shared
 		events,
-		pluginExecutor,
-		pluginRegistry,
+		pluginManager,
 		credService,
 		resultWriter,
 	)
@@ -245,14 +236,14 @@ func startScheduler(
 	)
 }
 
-func initHTTPServer(authService *auth.Service, db *pgxpool.Pool, events *channels.EventChannels, hub *discovery.Hub, provisioner *discovery.Provisioner) *http.Server {
+func initHTTPServer(authService *auth2.Service, db *pgxpool.Pool, events *globals.EventChannels, hub *discovery.Hub, provisioner *discovery.Provisioner) *http.Server {
 	cfg := globals.GetConfig()
 	router := api.NewRouter(authService, db, events, hub, provisioner)
 	return &http.Server{
 		Addr:         fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
 		Handler:      router,
-		ReadTimeout:  cfg.Server.GetReadTimeout(),
-		WriteTimeout: cfg.Server.GetWriteTimeout(),
+		ReadTimeout:  cfg.Server.ReadTimeout(),
+		WriteTimeout: cfg.Server.WriteTimeout(),
 	}
 }
 

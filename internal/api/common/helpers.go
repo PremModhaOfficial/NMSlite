@@ -8,7 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/nmslite/nmslite/internal/auth"
+	"github.com/nmslite/nmslite/internal/api/auth"
 )
 
 // SendJSON sends a JSON response

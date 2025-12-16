@@ -3,9 +3,9 @@ package common
 import (
 	"log/slog"
 
-	"github.com/nmslite/nmslite/internal/auth"
-	"github.com/nmslite/nmslite/internal/channels"
+	"github.com/nmslite/nmslite/internal/api/auth"
 	"github.com/nmslite/nmslite/internal/database/dbgen"
+	"github.com/nmslite/nmslite/internal/globals"
 	"github.com/nmslite/nmslite/internal/protocols"
 )
 
@@ -14,7 +14,7 @@ type Dependencies struct {
 	Q        dbgen.Querier
 	Auth     *auth.Service
 	Registry *protocols.Registry
-	Events   *channels.EventChannels
+	Events   *globals.EventChannels
 	Logger   *slog.Logger
 }
 

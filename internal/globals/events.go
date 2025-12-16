@@ -1,15 +1,39 @@
-// Package channels provides typed Go channels for event-driven architecture,
-// replacing the generic eventbus pattern with compile-time type safety.
-package channels
+// Package globals  provides typed Go channels for event-driven architecture,
+package globals
 
 import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/nmslite/nmslite/internal/api/auth"
 	"github.com/nmslite/nmslite/internal/database/dbgen"
-	"github.com/nmslite/nmslite/internal/globals"
-	"github.com/nmslite/nmslite/internal/plugins"
+	// "github.com/nmslite/nmslite/internal/poller" - REMOVED
 )
+
+// PluginInfo represents a loaded plugin with its metadata and runtime paths
+type PluginInfo struct {
+	Name       string `json:"name"`
+	Protocol   string `json:"protocol"`
+	BinaryPath string `json:"-"`
+	ConfigDir  string `json:"-"`
+}
+
+// PollTask represents a single polling task
+type PollTask struct {
+	RequestID   string           `json:"request_id"`
+	Target      string           `json:"target"`
+	Port        int              `json:"port"`
+	Credentials auth.Credentials `json:"credentials"`
+}
+
+// PollResult represents polling result
+type PollResult struct {
+	RequestID string        `json:"request_id"`
+	Status    string        `json:"status"`
+	Timestamp string        `json:"timestamp,omitempty"`
+	Metrics   []interface{} `json:"metrics,omitempty"`
+	Error     string        `json:"error,omitempty"`
+}
 
 // DiscoveryRequestEvent is published when a discovery begins execution
 type DiscoveryRequestEvent struct {
@@ -30,7 +54,7 @@ type DiscoveryStatusEvent struct {
 type DeviceValidatedEvent struct {
 	DiscoveryProfile  dbgen.DiscoveryProfile
 	CredentialProfile dbgen.CredentialProfile
-	Plugin            *plugins.PluginInfo
+	Plugin            *PluginInfo
 	IP                string
 	Port              int
 	Hostname          string
@@ -93,7 +117,7 @@ type EventChannels struct {
 
 // NewEventChannels creates a new EventChannels hub with configured buffer sizes
 func NewEventChannels() *EventChannels {
-	cfg := globals.GetConfig().Channel
+	cfg := GetConfig().Channel
 
 	discoverySize := cfg.DiscoveryEventsChannelSize
 	if discoverySize <= 0 {

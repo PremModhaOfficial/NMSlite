@@ -7,62 +7,55 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/nmslite/nmslite/internal/api/common"
-	"github.com/nmslite/nmslite/internal/channels"
 	"github.com/nmslite/nmslite/internal/database/dbgen"
 	"github.com/nmslite/nmslite/internal/discovery"
+	"github.com/nmslite/nmslite/internal/globals"
 )
 
 // DiscoveryHandler handles discovery profile endpoints
 type DiscoveryHandler struct {
-	*common.CRUDHandler[dbgen.DiscoveryProfile]
-	hub *discovery.Hub
-	// We need to import "github.com/nmslite/nmslite/internal/discovery" but we are in "handlers".
-	// internal/api/handlers -> internal/discovery is fine.
+	Deps *common.Dependencies
+	hub  *discovery.Hub
 }
 
 func NewDiscoveryHandler(deps *common.Dependencies, hub *discovery.Hub) *DiscoveryHandler {
-	h := &DiscoveryHandler{
-		hub: hub,
-	}
-
-	h.CRUDHandler = &common.CRUDHandler[dbgen.DiscoveryProfile]{
+	return &DiscoveryHandler{
 		Deps: deps,
-		Name: "Discovery Profile",
+		hub:  hub,
 	}
-
-	h.ListFunc = h.list
-	h.CreateFunc = h.create
-	h.GetFunc = h.get
-	h.UpdateFunc = h.update
-	h.DeleteFunc = h.delete
-
-	return h
 }
 
-func (h *DiscoveryHandler) list(ctx context.Context) ([]dbgen.DiscoveryProfile, error) {
-	profiles, err := h.Deps.Q.ListDiscoveryProfiles(ctx)
-	if err != nil {
-		return nil, err
+// List handles GET requests
+func (h *DiscoveryHandler) List(w http.ResponseWriter, r *http.Request) {
+	profiles, err := h.Deps.Q.ListDiscoveryProfiles(r.Context())
+	if common.HandleDBError(w, r, err, "Discovery Profile") {
+		return
 	}
 	for i := range profiles {
 		if decrypted, err := h.Deps.Decrypt(profiles[i].TargetValue); err == nil {
 			profiles[i].TargetValue = string(decrypted)
 		}
 	}
-	return profiles, nil
+	common.SendListResponse(w, profiles, len(profiles))
 }
 
-func (h *DiscoveryHandler) create(ctx context.Context, input dbgen.DiscoveryProfile) (dbgen.DiscoveryProfile, error) {
+// Create handles POST requests
+func (h *DiscoveryHandler) Create(w http.ResponseWriter, r *http.Request) {
+	input, ok := common.DecodeJSON[dbgen.DiscoveryProfile](w, r)
+	if !ok {
+		return
+	}
+
 	if input.Name == "" || input.TargetValue == "" {
-		return dbgen.DiscoveryProfile{}, http.ErrMissingFile
+		common.SendError(w, r, http.StatusBadRequest, "VALIDATION_ERROR", "Name and TargetValue are required", nil)
+		return
 	}
 
 	encrypted, err := h.Deps.Encrypt([]byte(input.TargetValue))
 	if err != nil {
-		return dbgen.DiscoveryProfile{}, err
+		common.SendError(w, r, http.StatusInternalServerError, "ENCRYPTION_ERROR", "Failed to encrypt target value", err)
+		return
 	}
-	// Don't modify input pointer target value for safety, use param directly?
-	// input is value receiver here effectively (though struct could contain pointers).
 
 	params := dbgen.CreateDiscoveryProfileParams{
 		Name:                input.Name,
@@ -74,32 +67,65 @@ func (h *DiscoveryHandler) create(ctx context.Context, input dbgen.DiscoveryProf
 		AutoRun:             input.AutoRun,
 	}
 
-	profile, err := h.Deps.Q.CreateDiscoveryProfile(ctx, params)
-	if err != nil {
-		return profile, err
+	profile, err := h.Deps.Q.CreateDiscoveryProfile(r.Context(), params)
+	if common.HandleDBError(w, r, err, "Discovery Profile") {
+		return
 	}
 
 	if input.AutoRun.Bool {
-		triggerDiscovery(ctx, h.Deps, profile.ID)
+		triggerDiscovery(r.Context(), h.Deps, profile.ID)
 	}
-	return profile, nil
+
+	common.SendJSON(w, http.StatusCreated, profile)
 }
 
-func (h *DiscoveryHandler) get(ctx context.Context, id uuid.UUID) (dbgen.DiscoveryProfile, error) {
-	profile, err := h.Deps.Q.GetDiscoveryProfile(ctx, id)
-	if err != nil {
-		return dbgen.DiscoveryProfile{}, err
+// Get handles GET /{id} requests
+func (h *DiscoveryHandler) Get(w http.ResponseWriter, r *http.Request) {
+	id, ok := common.ParseUUIDParam(w, r, "id")
+	if !ok {
+		return
 	}
+
+	profile, err := h.Deps.Q.GetDiscoveryProfile(r.Context(), id)
+	if common.HandleDBError(w, r, err, "Discovery Profile") {
+		return
+	}
+
 	if decrypted, err := h.Deps.Decrypt(profile.TargetValue); err == nil {
 		profile.TargetValue = string(decrypted)
 	}
-	return profile, nil
+
+	common.SendJSON(w, http.StatusOK, profile)
 }
 
-func (h *DiscoveryHandler) update(ctx context.Context, id uuid.UUID, input dbgen.DiscoveryProfile) (dbgen.DiscoveryProfile, error) {
+// Update handles PUT/PATCH /{id} requests
+func (h *DiscoveryHandler) Update(w http.ResponseWriter, r *http.Request) {
+	id, ok := common.ParseUUIDParam(w, r, "id")
+	if !ok {
+		return
+	}
+
+	input, ok := common.DecodeJSON[dbgen.DiscoveryProfile](w, r)
+	if !ok {
+		return
+	}
+
+	// We need to re-encrypt if target value is provided (assuming full update or check logic)
+	// But generically input struct might not distinguish unset vs empty string if we rely on DecodeJSON.
+	// For simplicity, we assume frontend sends full object or we fetch and merge.
+	// The original handler didn't fetch-merge explicitly in UpdateFunc, let's see.
+	// It just did: encrypted, err := h.Deps.Encrypt([]byte(input.TargetValue))
+	// If input.TargetValue is empty, it encrypts empty byte slice. Ideally, we should fetch existing if we want partial updates,
+	// but the previous code didn't look like it did fetch-merge in UpdateFunc?
+	// Ah, wait. The previous `update` func:
+	// func (h *DiscoveryHandler) update(...) { encrypted... h.Deps.Q.UpdateDiscoveryProfile(...) }
+	// It relies on input having all fields or at least TargetValue.
+	// Let's stick to previous logic: Encrypt input.TargetValue.
+
 	encrypted, err := h.Deps.Encrypt([]byte(input.TargetValue))
 	if err != nil {
-		return dbgen.DiscoveryProfile{}, err
+		common.SendError(w, r, http.StatusInternalServerError, "ENCRYPTION_ERROR", "Failed to encrypt target value", err)
+		return
 	}
 
 	params := dbgen.UpdateDiscoveryProfileParams{
@@ -112,11 +138,28 @@ func (h *DiscoveryHandler) update(ctx context.Context, id uuid.UUID, input dbgen
 		AutoProvision:       input.AutoProvision,
 		AutoRun:             input.AutoRun,
 	}
-	return h.Deps.Q.UpdateDiscoveryProfile(ctx, params)
+
+	profile, err := h.Deps.Q.UpdateDiscoveryProfile(r.Context(), params)
+	if common.HandleDBError(w, r, err, "Discovery Profile") {
+		return
+	}
+
+	common.SendJSON(w, http.StatusOK, profile)
 }
 
-func (h *DiscoveryHandler) delete(ctx context.Context, id uuid.UUID) error {
-	return h.Deps.Q.DeleteDiscoveryProfile(ctx, id)
+// Delete handles DELETE /{id} requests
+func (h *DiscoveryHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	id, ok := common.ParseUUIDParam(w, r, "id")
+	if !ok {
+		return
+	}
+
+	err := h.Deps.Q.DeleteDiscoveryProfile(r.Context(), id)
+	if common.HandleDBError(w, r, err, "Discovery Profile") {
+		return
+	}
+
+	common.SendJSON(w, http.StatusNoContent, nil)
 }
 
 func triggerDiscovery(ctx context.Context, deps *common.Dependencies, id uuid.UUID) {
@@ -124,7 +167,7 @@ func triggerDiscovery(ctx context.Context, deps *common.Dependencies, id uuid.UU
 		return
 	}
 	select {
-	case deps.Events.DiscoveryRequest <- channels.DiscoveryRequestEvent{
+	case deps.Events.DiscoveryRequest <- globals.DiscoveryRequestEvent{
 		ProfileID: id,
 		StartedAt: time.Now(),
 	}:
@@ -142,8 +185,8 @@ func (h *DiscoveryHandler) Run(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate existence using GetFunc (simplest way to ensure it exists and we have access)
-	_, err := h.GetFunc(r.Context(), id)
+	// Validate existence
+	_, err := h.Deps.Q.GetDiscoveryProfile(r.Context(), id)
 	if common.HandleDBError(w, r, err, "Discovery profile") {
 		return
 	}

@@ -7,8 +7,30 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/nmslite/nmslite/internal/database/dbgen"
-	"github.com/nmslite/nmslite/internal/plugins"
+	// "github.com/nmslite/nmslite/internal/plugins" - REMOVED
 )
+
+// Credentials for authentication (Moved from plugins)
+type Credentials struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+	Domain   string `json:"domain,omitempty"`
+
+	// SSH specific
+	PrivateKey string `json:"private_key,omitempty"`
+	Passphrase string `json:"passphrase,omitempty"`
+
+	// SNMP v2c
+	Community string `json:"community,omitempty"`
+
+	// SNMP v3 (USM)
+	SecurityName  string `json:"security_name,omitempty"`
+	SecurityLevel string `json:"security_level,omitempty"`
+	AuthProtocol  string `json:"auth_protocol,omitempty"`
+	AuthPassword  string `json:"auth_password,omitempty"`
+	PrivProtocol  string `json:"priv_protocol,omitempty"`
+	PrivPassword  string `json:"priv_password,omitempty"`
+}
 
 // CredentialService handles credential decryption operations
 type CredentialService struct {
@@ -25,7 +47,7 @@ func NewCredentialService(authService *Service, querier dbgen.Querier) *Credenti
 }
 
 // GetDecrypted fetches and decrypts a credential profile
-func (s *CredentialService) GetDecrypted(ctx context.Context, profileID uuid.UUID) (*plugins.Credentials, error) {
+func (s *CredentialService) GetDecrypted(ctx context.Context, profileID uuid.UUID) (*Credentials, error) {
 	// Fetch credential profile
 	profile, err := s.querier.GetCredentialProfile(ctx, profileID)
 	if err != nil {
@@ -37,7 +59,7 @@ func (s *CredentialService) GetDecrypted(ctx context.Context, profileID uuid.UUI
 }
 
 // DecryptContainer decrypts the raw payload JSON blob (which contains an encrypted string)
-func (s *CredentialService) DecryptContainer(container []byte) (*plugins.Credentials, error) {
+func (s *CredentialService) DecryptContainer(container []byte) (*Credentials, error) {
 	// Decrypt payload (expecting a JSON string containing the encrypted payload)
 	var encryptedStr string
 	if err := json.Unmarshal(container, &encryptedStr); err != nil {
@@ -57,7 +79,7 @@ func (s *CredentialService) DecryptContainer(container []byte) (*plugins.Credent
 	}
 
 	// Build Credentials struct
-	creds := &plugins.Credentials{}
+	creds := &Credentials{}
 
 	if username, ok := credMap["username"].(string); ok {
 		creds.Username = username

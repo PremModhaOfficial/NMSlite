@@ -8,41 +8,41 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/nmslite/nmslite/internal/channels"
 	"github.com/nmslite/nmslite/internal/database/dbgen"
-	"github.com/nmslite/nmslite/internal/plugins"
+	"github.com/nmslite/nmslite/internal/globals"
+	"github.com/nmslite/nmslite/internal/poller"
 )
 
 // Provisioner handles the logic for provisioning monitors from discovered devices.
 type Provisioner struct {
-	querier  dbgen.Querier
-	events   *channels.EventChannels
-	registry *plugins.Registry
-	logger   *slog.Logger
+	querier       dbgen.Querier
+	events        *globals.EventChannels
+	pluginManager *poller.PluginManager
+	logger        *slog.Logger
 }
 
 // NewProvisioner creates a new Provisioner.
-func NewProvisioner(querier dbgen.Querier, events *channels.EventChannels, registry *plugins.Registry, logger *slog.Logger) *Provisioner {
+func NewProvisioner(querier dbgen.Querier, events *globals.EventChannels, pluginManager *poller.PluginManager, logger *slog.Logger) *Provisioner {
 	return &Provisioner{
-		querier:  querier,
-		events:   events,
-		registry: registry,
-		logger:   logger,
+		querier:       querier,
+		events:        events,
+		pluginManager: pluginManager,
+		logger:        logger,
 	}
 }
 
 // ProvisionFromEvent creates a monitor based on a validated discovery event.
-func (p *Provisioner) ProvisionFromEvent(ctx context.Context, event channels.DeviceValidatedEvent) error {
+func (p *Provisioner) ProvisionFromEvent(ctx context.Context, event globals.DeviceValidatedEvent) error {
 	p.logger.InfoContext(ctx, "Provisioning monitor from event",
 		slog.String("ip", event.IP),
-		slog.String("plugin", event.Plugin.Manifest.ID),
+		slog.String("plugin", event.Plugin.Manifest.Protocol),
 	)
 
 	monitor, err := p.querier.CreateMonitor(ctx, dbgen.CreateMonitorParams{
 		IpAddress:           netip.MustParseAddr(event.IP),
 		Hostname:            pgtype.Text{String: event.Hostname, Valid: event.Hostname != ""},
 		Port:                pgtype.Int4{Int32: int32(event.Port), Valid: true},
-		PluginID:            event.Plugin.Manifest.ID,
+		PluginID:            event.Plugin.Manifest.Protocol,
 		CredentialProfileID: event.CredentialProfile.ID,
 		DiscoveryProfileID:  event.DiscoveryProfile.ID,
 	})
@@ -80,8 +80,8 @@ func (p *Provisioner) ProvisionFromID(ctx context.Context, deviceID uuid.UUID) (
 	// 4. Resolve Plugin ID
 	// Try to find registered plugin
 	pluginID := credProfile.Protocol // Default to protocol name if not internal
-	if plugin, err := p.registry.GetByProtocol(credProfile.Protocol); err == nil {
-		pluginID = plugin.Manifest.ID
+	if plugin, ok := p.pluginManager.Get(credProfile.Protocol); ok {
+		pluginID = plugin.Manifest.Protocol
 	} else {
 		// Fallback for internal protocols or if registry lookup fails (assuming protocol name = plugin id for simple cases)
 		// Or we can check if it's one of the known internal ones?
@@ -134,7 +134,7 @@ func (p *Provisioner) pushToPoller(ctx context.Context, monitorID uuid.UUID) err
 	}
 
 	select {
-	case p.events.CacheInvalidate <- channels.CacheInvalidateEvent{
+	case p.events.CacheInvalidate <- globals.CacheInvalidateEvent{
 		UpdateType: "update",
 		Monitors:   []dbgen.GetMonitorWithCredentialsRow{fullMonitor},
 	}:

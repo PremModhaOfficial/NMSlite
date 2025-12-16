@@ -6,10 +6,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	auth2 "github.com/nmslite/nmslite/internal/api/auth"
 	"github.com/nmslite/nmslite/internal/api/common"
 	"github.com/nmslite/nmslite/internal/api/handlers"
-	"github.com/nmslite/nmslite/internal/auth"
-	"github.com/nmslite/nmslite/internal/channels"
 	"github.com/nmslite/nmslite/internal/database/dbgen"
 	"github.com/nmslite/nmslite/internal/discovery"
 	"github.com/nmslite/nmslite/internal/globals"
@@ -17,19 +16,19 @@ import (
 )
 
 // NewRouter NewRouter creates and configures the API router
-func NewRouter(authService *auth.Service, db *pgxpool.Pool, events *channels.EventChannels, hub *discovery.Hub, provisioner *discovery.Provisioner) http.Handler {
+func NewRouter(authService *auth2.Service, db *pgxpool.Pool, events *globals.EventChannels, hub *discovery.Hub, provisioner *discovery.Provisioner) http.Handler {
 	cfg := globals.GetConfig()
 	logger := slog.Default()
 	r := chi.NewRouter()
 
 	// Apply middleware
-	r.Use(auth.RequestID)
-	r.Use(auth.Logger(slog.Default()))
-	r.Use(auth.Recovery(slog.Default()))
+	r.Use(auth2.RequestID)
+	r.Use(auth2.Logger(slog.Default()))
+	r.Use(auth2.Recovery(slog.Default()))
 
 	// CORS (if enabled)
 	if cfg.CORS.Enabled {
-		r.Use(auth.CORS(
+		r.Use(auth2.CORS(
 			cfg.CORS.AllowedOrigins,
 			cfg.CORS.AllowedMethods,
 			cfg.CORS.AllowedHeaders,
@@ -68,7 +67,7 @@ func NewRouter(authService *auth.Service, db *pgxpool.Pool, events *channels.Eve
 
 		// Protected routes (require JWT)
 		r.Group(func(r chi.Router) {
-			r.Use(auth.JWTAuth(authService))
+			r.Use(auth2.JWTAuth(authService))
 
 			// Credential Profiles
 			r.Route("/credentials", func(r chi.Router) {

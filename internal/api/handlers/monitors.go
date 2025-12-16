@@ -9,97 +9,37 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/nmslite/nmslite/internal/api/common"
-	"github.com/nmslite/nmslite/internal/channels"
 	"github.com/nmslite/nmslite/internal/database/dbgen"
+	"github.com/nmslite/nmslite/internal/globals"
 )
 
 type MonitorHandler struct {
-	*common.CRUDHandler[dbgen.Monitor]
+	Deps *common.Dependencies
 }
 
 func NewMonitorHandler(deps *common.Dependencies) *MonitorHandler {
-	h := &MonitorHandler{}
-
-	h.CRUDHandler = &common.CRUDHandler[dbgen.Monitor]{
-		Deps: deps,
-		Name: "Monitor",
-		// CacheType removed, manual handling below
-	}
-
-	// Wrap generic functions to add Push-Model Cache Invalidation
-	h.ListFunc = h.list
-
-	// Create: generic create -> fetch full data -> push event
-	h.CreateFunc = func(ctx context.Context, input dbgen.Monitor) (dbgen.Monitor, error) {
-		m, err := h.create(ctx, input)
-		if err == nil {
-			h.pushUpdate(ctx, m.ID)
-		}
-		return m, err
-	}
-
-	h.GetFunc = h.get
-
-	// Update: generic update -> fetch full data -> push event
-	h.UpdateFunc = func(ctx context.Context, id uuid.UUID, input dbgen.Monitor) (dbgen.Monitor, error) {
-		m, err := h.update(ctx, id, input)
-		if err == nil {
-			h.pushUpdate(ctx, m.ID)
-		}
-		return m, err
-	}
-
-	// Delete: generic delete -> push delete event
-	h.DeleteFunc = func(ctx context.Context, id uuid.UUID) error {
-		err := h.delete(ctx, id)
-		if err == nil {
-			h.pushDelete(ctx, id)
-		}
-		return err
-	}
-
-	return h
+	return &MonitorHandler{Deps: deps}
 }
 
-// pushUpdate fetches the joined monitor data and sends it to the scheduler
-func (h *MonitorHandler) pushUpdate(ctx context.Context, id uuid.UUID) {
-	if h.Deps.Events == nil {
+// List handles GET requests
+func (h *MonitorHandler) List(w http.ResponseWriter, r *http.Request) {
+	monitors, err := h.Deps.Q.ListMonitors(r.Context())
+	if common.HandleDBError(w, r, err, "Monitor") {
 		return
 	}
-	row, err := h.Deps.Q.GetMonitorWithCredentials(ctx, id)
-	if err != nil {
-		// Log but don't fail the request?
-		// The generic handler uses h.Deps.Logger usually, but CRUDHandler doesn't expose it directly as public field?
-		// Deps is public.
-		if h.Deps.Logger != nil {
-			h.Deps.Logger.Error("failed to fetch monitor for cache push", "monitor_id", id, "error", err)
-		}
+	common.SendListResponse(w, monitors, len(monitors))
+}
+
+// Create handles POST requests
+func (h *MonitorHandler) Create(w http.ResponseWriter, r *http.Request) {
+	input, ok := common.DecodeJSON[dbgen.Monitor](w, r)
+	if !ok {
 		return
 	}
-	h.Deps.Events.CacheInvalidate <- channels.CacheInvalidateEvent{
-		UpdateType: "update",
-		Monitors:   []dbgen.GetMonitorWithCredentialsRow{row},
-	}
-}
 
-// pushDelete sends a delete signal to the scheduler
-func (h *MonitorHandler) pushDelete(ctx context.Context, id uuid.UUID) {
-	if h.Deps.Events == nil {
-		return
-	}
-	h.Deps.Events.CacheInvalidate <- channels.CacheInvalidateEvent{
-		UpdateType: "delete",
-		MonitorIDs: []uuid.UUID{id},
-	}
-}
-
-func (h *MonitorHandler) list(ctx context.Context) ([]dbgen.Monitor, error) {
-	return h.Deps.Q.ListMonitors(ctx)
-}
-
-func (h *MonitorHandler) create(ctx context.Context, input dbgen.Monitor) (dbgen.Monitor, error) {
 	if err := h.validateMonitorInput(input); err != nil {
-		return dbgen.Monitor{}, err
+		common.SendError(w, r, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+		return
 	}
 
 	displayName := input.DisplayName
@@ -123,33 +63,46 @@ func (h *MonitorHandler) create(ctx context.Context, input dbgen.Monitor) (dbgen
 		Status:                 input.Status,
 	}
 
-	return h.Deps.Q.CreateMonitor(ctx, params)
+	monitor, err := h.Deps.Q.CreateMonitor(r.Context(), params)
+	if common.HandleDBError(w, r, err, "Monitor") {
+		return
+	}
+
+	h.pushUpdate(r.Context(), monitor.ID)
+
+	common.SendJSON(w, http.StatusCreated, monitor)
 }
 
-func (h *MonitorHandler) validateMonitorInput(input dbgen.Monitor) error {
-	if !input.IpAddress.IsValid() {
-		return fmt.Errorf("ip_address is required and must be valid")
+// Get handles GET /{id} requests
+func (h *MonitorHandler) Get(w http.ResponseWriter, r *http.Request) {
+	id, ok := common.ParseUUIDParam(w, r, "id")
+	if !ok {
+		return
 	}
-	if input.PluginID == "" {
-		return fmt.Errorf("plugin_id is required")
+
+	monitor, err := h.Deps.Q.GetMonitor(r.Context(), id)
+	if common.HandleDBError(w, r, err, "Monitor") {
+		return
 	}
-	if input.CredentialProfileID == uuid.Nil {
-		return fmt.Errorf("credential_profile_id is required")
-	}
-	if input.DiscoveryProfileID == uuid.Nil {
-		return fmt.Errorf("discovery_profile_id is required")
-	}
-	return nil
+
+	common.SendJSON(w, http.StatusOK, monitor)
 }
 
-func (h *MonitorHandler) get(ctx context.Context, id uuid.UUID) (dbgen.Monitor, error) {
-	return h.Deps.Q.GetMonitor(ctx, id)
-}
+// Update handles PUT/PATCH /{id} requests
+func (h *MonitorHandler) Update(w http.ResponseWriter, r *http.Request) {
+	id, ok := common.ParseUUIDParam(w, r, "id")
+	if !ok {
+		return
+	}
 
-func (h *MonitorHandler) update(ctx context.Context, id uuid.UUID, input dbgen.Monitor) (dbgen.Monitor, error) {
-	existing, err := h.Deps.Q.GetMonitor(ctx, id)
-	if err != nil {
-		return dbgen.Monitor{}, err
+	input, ok := common.DecodeJSON[dbgen.Monitor](w, r)
+	if !ok {
+		return
+	}
+
+	existing, err := h.Deps.Q.GetMonitor(r.Context(), id)
+	if common.HandleDBError(w, r, err, "Monitor") {
+		return
 	}
 
 	// Merge Logic: if input field is "Valid" (present in JSON), update it.
@@ -172,9 +125,7 @@ func (h *MonitorHandler) update(ctx context.Context, id uuid.UUID, input dbgen.M
 		params.Hostname = input.Hostname
 	}
 	// IpAddress is netip.Addr, not pgtype. It's a struct (not pointer).
-	// netip.Addr{} is invalid. valid one returns IsValid() = true.
-	// Input JSON string "" -> invalid Addr?
-	// If user sends valid IP, we update.
+	// valid one returns IsValid() = true.
 	if input.IpAddress.IsValid() {
 		params.IpAddress = input.IpAddress
 	}
@@ -194,11 +145,76 @@ func (h *MonitorHandler) update(ctx context.Context, id uuid.UUID, input dbgen.M
 		params.Status = input.Status
 	}
 
-	return h.Deps.Q.UpdateMonitor(ctx, params)
+	monitor, err := h.Deps.Q.UpdateMonitor(r.Context(), params)
+	if common.HandleDBError(w, r, err, "Monitor") {
+		return
+	}
+
+	h.pushUpdate(r.Context(), monitor.ID)
+
+	common.SendJSON(w, http.StatusOK, monitor)
 }
 
-func (h *MonitorHandler) delete(ctx context.Context, id uuid.UUID) error {
-	return h.Deps.Q.DeleteMonitor(ctx, id)
+// Delete handles DELETE /{id} requests
+func (h *MonitorHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	id, ok := common.ParseUUIDParam(w, r, "id")
+	if !ok {
+		return
+	}
+
+	err := h.Deps.Q.DeleteMonitor(r.Context(), id)
+	if common.HandleDBError(w, r, err, "Monitor") {
+		return
+	}
+
+	h.pushDelete(r.Context(), id)
+
+	common.SendJSON(w, http.StatusNoContent, nil)
+}
+
+// pushUpdate fetches the joined monitor data and sends it to the scheduler
+func (h *MonitorHandler) pushUpdate(ctx context.Context, id uuid.UUID) {
+	if h.Deps.Events == nil {
+		return
+	}
+	row, err := h.Deps.Q.GetMonitorWithCredentials(ctx, id)
+	if err != nil {
+		if h.Deps.Logger != nil {
+			h.Deps.Logger.Error("failed to fetch monitor for cache push", "monitor_id", id, "error", err)
+		}
+		return
+	}
+	h.Deps.Events.CacheInvalidate <- globals.CacheInvalidateEvent{
+		UpdateType: "update",
+		Monitors:   []dbgen.GetMonitorWithCredentialsRow{row},
+	}
+}
+
+// pushDelete sends a delete signal to the scheduler
+func (h *MonitorHandler) pushDelete(ctx context.Context, id uuid.UUID) {
+	if h.Deps.Events == nil {
+		return
+	}
+	h.Deps.Events.CacheInvalidate <- globals.CacheInvalidateEvent{
+		UpdateType: "delete",
+		MonitorIDs: []uuid.UUID{id},
+	}
+}
+
+func (h *MonitorHandler) validateMonitorInput(input dbgen.Monitor) error {
+	if !input.IpAddress.IsValid() {
+		return fmt.Errorf("ip_address is required and must be valid")
+	}
+	if input.PluginID == "" {
+		return fmt.Errorf("plugin_id is required")
+	}
+	if input.CredentialProfileID == uuid.Nil {
+		return fmt.Errorf("credential_profile_id is required")
+	}
+	if input.DiscoveryProfileID == uuid.Nil {
+		return fmt.Errorf("discovery_profile_id is required")
+	}
+	return nil
 }
 
 // Metrics Query Logic
