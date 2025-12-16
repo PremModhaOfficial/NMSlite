@@ -33,6 +33,7 @@ type DeviceValidatedEvent struct {
 	Plugin            *plugins.PluginInfo
 	IP                string
 	Port              int
+	Hostname          string
 }
 
 // MonitorStateEvent is published when a monitor state changes

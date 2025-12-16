@@ -70,12 +70,15 @@ func main() {
 	hub := discovery.NewHub()
 	go hub.Run()
 
+	// Initialize Provisioner
+	provisioner := discovery.NewProvisioner(dbgen.New(pool), events, pluginRegistry, logger)
+
 	// Start Discovery Handlers (now in discovery package, using Hub)
-	discovery.StartProvisionHandler(ctx, events, dbgen.New(pool), hub, logger)
+	discovery.StartProvisionHandler(ctx, events, dbgen.New(pool), hub, logger, provisioner)
 	discovery.StartDiscoveryCompletionLogger(ctx, events, hub, slog.Default())
 
 	// Start HTTP server
-	srv := initHTTPServer(authService, pool, events, hub)
+	srv := initHTTPServer(authService, pool, events, hub, provisioner)
 	go startServer(srv)
 
 	// Wait for shutdown signal
@@ -242,9 +245,9 @@ func startScheduler(
 	)
 }
 
-func initHTTPServer(authService *auth.Service, db *pgxpool.Pool, events *channels.EventChannels, hub *discovery.Hub) *http.Server {
+func initHTTPServer(authService *auth.Service, db *pgxpool.Pool, events *channels.EventChannels, hub *discovery.Hub, provisioner *discovery.Provisioner) *http.Server {
 	cfg := globals.GetConfig()
-	router := api.NewRouter(authService, db, events, hub)
+	router := api.NewRouter(authService, db, events, hub, provisioner)
 	return &http.Server{
 		Addr:         fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
 		Handler:      router,

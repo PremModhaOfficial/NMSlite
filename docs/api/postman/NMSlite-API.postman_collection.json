@@ -39,30 +39,12 @@
 			"value": "Admin@123",
 			"type": "string",
 			"description": "Default admin password"
-		},
-		{
-			"key": "credential_id",
-			"value": "",
-			"type": "string",
-			"description": "Credential Profile ID"
-		},
-		{
-			"key": "discovery_id",
-			"value": "",
-			"type": "string",
-			"description": "Discovery Profile ID"
-		},
-		{
-			"key": "monitor_id",
-			"value": "",
-			"type": "string",
-			"description": "Monitor ID"
 		}
 	],
 	"item": [
 		{
-			"name": "Health & Auth",
-			"description": "Public endpoints for health checks and authentication",
+			"name": "System & Auth",
+			"description": "Public endpoints for health checks, system info, and authentication",
 			"auth": {
 				"type": "noauth"
 			},
@@ -75,7 +57,6 @@
 						"url": "{{base_url}}/health",
 						"description": "Liveness probe - checks if the service is running"
 					},
-					"response": [],
 					"event": [
 						{
 							"listen": "test",
@@ -84,15 +65,9 @@
 									"pm.test('Status code is 200', function () {",
 									"    pm.response.to.have.status(200);",
 									"});",
-									"",
 									"pm.test('Response has status ok', function () {",
 									"    const jsonData = pm.response.json();",
 									"    pm.expect(jsonData.status).to.eql('ok');",
-									"});",
-									"",
-									"pm.test('Response has timestamp', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.timestamp).to.exist;",
 									"});"
 								],
 								"type": "text/javascript"
@@ -108,7 +83,6 @@
 						"url": "{{base_url}}/ready",
 						"description": "Readiness probe - checks if the service is ready to accept requests (database, queue, plugins)"
 					},
-					"response": [],
 					"event": [
 						{
 							"listen": "test",
@@ -117,12 +91,6 @@
 									"pm.test('Status code is 200 or 503', function () {",
 									"    pm.expect(pm.response.code).to.be.oneOf([200, 503]);",
 									"});",
-									"",
-									"pm.test('Response has status field', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.status).to.exist;",
-									"});",
-									"",
 									"pm.test('Response has checks object', function () {",
 									"    const jsonData = pm.response.json();",
 									"    pm.expect(jsonData.checks).to.exist;",
@@ -150,7 +118,6 @@
 						"url": "{{base_url}}/api/v1/login",
 						"description": "Authenticate and receive JWT token. Token is automatically saved to the environment variable."
 					},
-					"response": [],
 					"event": [
 						{
 							"listen": "test",
@@ -159,26 +126,45 @@
 									"pm.test('Status code is 200', function () {",
 									"    pm.response.to.have.status(200);",
 									"});",
-									"",
-									"pm.test('Response has token', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.token).to.exist;",
-									"});",
-									"",
-									"pm.test('Response has expires_at', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.expires_at).to.exist;",
-									"});",
-									"",
-									"// Extract and save token to collection and environment",
 									"if (pm.response.code === 200) {",
 									"    const jsonData = pm.response.json();",
 									"    if (jsonData.token) {",
 									"        pm.collectionVariables.set('token', jsonData.token);",
 									"        pm.environment.set('token', jsonData.token);",
-									"        console.log('Token saved to collection and environment variables');",
+									"        console.log('Token saved.');",
 									"    }",
 									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Login (Invalid)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"username\": \"wrong\",\n    \"password\": \"wrong\"\n}"
+						},
+						"url": "{{base_url}}/api/v1/login",
+						"description": "Negative test for login"
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 401', function () {",
+									"    pm.response.to.have.status(401);",
+									"});"
 								],
 								"type": "text/javascript"
 							}
@@ -199,7 +185,6 @@
 						"url": "{{base_url}}/api/v1/credentials",
 						"description": "List all credential profiles."
 					},
-					"response": [],
 					"event": [
 						{
 							"listen": "test",
@@ -207,16 +192,6 @@
 								"exec": [
 									"pm.test('Status code is 200', function () {",
 									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test('Response has data array', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.data).to.be.an('array');",
-									"});",
-									"",
-									"pm.test('Response has total count', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.total).to.exist;",
 									"});"
 								],
 								"type": "text/javascript"
@@ -236,12 +211,10 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"name\": \"SSH Credentials\",\n    \"description\": \"SSH access for Linux servers\",\n    \"protocol\": \"ssh\",\n    \"payload\": {\n        \"username\": \"admin\",\n        \"password\": \"secure_password\",\n        \"port\": 22\n    }\n}"
+							"raw": "{\n    \"name\": \"SSH Credentials\",\n    \"description\": \"SSH access for Linux servers\",\n    \"protocol\": \"ssh\",\n    \"payload\": {\n        \"username\": \"admin\",\n        \"password\": \"secure_password\"\n    }\n}"
 						},
-						"url": "{{base_url}}/api/v1/credentials",
-						"description": "Create a new SSH credential profile. The payload is sent in plaintext; the backend encrypts it before storage."
+						"url": "{{base_url}}/api/v1/credentials"
 					},
-					"response": [],
 					"event": [
 						{
 							"listen": "test",
@@ -250,152 +223,13 @@
 									"pm.test('Status code is 201', function () {",
 									"    pm.response.to.have.status(201);",
 									"});",
-									"",
-									"pm.test('Response has id', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.id).to.exist;",
-									"});",
-									"",
-									"pm.test('Response has correct protocol', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.protocol).to.eql('ssh');",
-									"});",
-									"",
-									"// Extract and save credential_id",
 									"if (pm.response.code === 201) {",
 									"    const jsonData = pm.response.json();",
 									"    if (jsonData.id) {",
 									"        pm.collectionVariables.set('credential_id', jsonData.id);",
 									"        pm.environment.set('credential_id', jsonData.id);",
-									"        console.log('Credential ID saved:', jsonData.id);",
 									"    }",
 									"}"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "Create Credential (WinRM)",
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n    \"name\": \"WinRM Credentials\",\n    \"description\": \"Windows Remote Management credentials\",\n    \"protocol\": \"winrm\",\n    \"payload\": {\n        \"username\": \"administrator\",\n        \"password\": \"WindowsPassword123!\",\n        \"domain\": \"CORP\"\n    }\n}"
-						},
-						"url": "{{base_url}}/api/v1/credentials",
-						"description": "Create a new WinRM credential profile for Windows servers."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test('Status code is 201', function () {",
-									"    pm.response.to.have.status(201);",
-									"});",
-									"",
-									"pm.test('Response has id', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.id).to.exist;",
-									"});",
-									"",
-									"pm.test('Response has correct protocol', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.protocol).to.eql('winrm');",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "Create Credential (SNMP v2c)",
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n    \"name\": \"SNMP v2c Credentials\",\n    \"description\": \"SNMP v2c community string for network devices\",\n    \"protocol\": \"snmp-v2c\",\n    \"payload\": {\n        \"community\": \"public\",\n        \"port\": 161\n    }\n}"
-						},
-						"url": "{{base_url}}/api/v1/credentials",
-						"description": "Create a new SNMP v2c credential profile."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test('Status code is 201', function () {",
-									"    pm.response.to.have.status(201);",
-									"});",
-									"",
-									"pm.test('Response has id', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.id).to.exist;",
-									"});",
-									"",
-									"pm.test('Response has correct protocol', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.protocol).to.eql('snmp-v2c');",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "Create Credential (SNMP v3)",
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n    \"name\": \"SNMP v3 Credentials\",\n    \"description\": \"SNMP v3 secure credentials for network devices\",\n    \"protocol\": \"snmp-v3\",\n    \"payload\": {\n        \"username\": \"snmpuser\",\n        \"security_level\": \"authPriv\",\n        \"auth_protocol\": \"SHA\",\n        \"auth_password\": \"authpass123\",\n        \"priv_protocol\": \"AES\",\n        \"priv_password\": \"privpass123\",\n        \"port\": 161\n    }\n}"
-						},
-						"url": "{{base_url}}/api/v1/credentials",
-						"description": "Create a new SNMP v3 credential profile with authentication and privacy."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test('Status code is 201', function () {",
-									"    pm.response.to.have.status(201);",
-									"});",
-									"",
-									"pm.test('Response has id', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.id).to.exist;",
-									"});",
-									"",
-									"pm.test('Response has correct protocol', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.protocol).to.eql('snmp-v3');",
-									"});"
 								],
 								"type": "text/javascript"
 							}
@@ -407,10 +241,8 @@
 					"request": {
 						"method": "GET",
 						"header": [],
-						"url": "{{base_url}}/api/v1/credentials/{{credential_id}}",
-						"description": "Get a specific credential profile by ID."
+						"url": "{{base_url}}/api/v1/credentials/{{credential_id}}"
 					},
-					"response": [],
 					"event": [
 						{
 							"listen": "test",
@@ -418,21 +250,6 @@
 								"exec": [
 									"pm.test('Status code is 200', function () {",
 									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test('Response has id', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.id).to.exist;",
-									"});",
-									"",
-									"pm.test('Response has name', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.name).to.exist;",
-									"});",
-									"",
-									"pm.test('Response has protocol', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.protocol).to.exist;",
 									"});"
 								],
 								"type": "text/javascript"
@@ -452,12 +269,10 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"name\": \"Updated SSH Credentials\",\n    \"description\": \"Updated SSH access for servers\",\n    \"protocol\": \"ssh\",\n    \"payload\": {\n        \"username\": \"newadmin\",\n        \"password\": \"new_secure_password\",\n        \"port\": 22\n    }\n}"
+							"raw": "{\n    \"name\": \"Updated SSH Credentials\",\n    \"description\": \"Updated SSH access for servers\",\n    \"protocol\": \"ssh\",\n    \"payload\": {\n        \"username\": \"newadmin\",\n        \"password\": \"new_secure_password\"\n    }\n}"
 						},
-						"url": "{{base_url}}/api/v1/credentials/{{credential_id}}",
-						"description": "Update an existing credential profile."
+						"url": "{{base_url}}/api/v1/credentials/{{credential_id}}"
 					},
-					"response": [],
 					"event": [
 						{
 							"listen": "test",
@@ -465,16 +280,6 @@
 								"exec": [
 									"pm.test('Status code is 200', function () {",
 									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test('Response has updated name', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.name).to.eql('Updated SSH Credentials');",
-									"});",
-									"",
-									"pm.test('updated_at is present', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.updated_at).to.exist;",
 									"});"
 								],
 								"type": "text/javascript"
@@ -487,10 +292,8 @@
 					"request": {
 						"method": "DELETE",
 						"header": [],
-						"url": "{{base_url}}/api/v1/credentials/{{credential_id}}",
-						"description": "Soft delete a credential profile. Will fail if credential is in use by active monitors."
+						"url": "{{base_url}}/api/v1/credentials/{{credential_id}}"
 					},
-					"response": [],
 					"event": [
 						{
 							"listen": "test",
@@ -516,10 +319,8 @@
 					"request": {
 						"method": "GET",
 						"header": [],
-						"url": "{{base_url}}/api/v1/discoveries",
-						"description": "List all discovery profiles."
+						"url": "{{base_url}}/api/v1/discoveries"
 					},
-					"response": [],
 					"event": [
 						{
 							"listen": "test",
@@ -527,16 +328,6 @@
 								"exec": [
 									"pm.test('Status code is 200', function () {",
 									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test('Response has data array', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.data).to.be.an('array');",
-									"});",
-									"",
-									"pm.test('Response has total count', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.total).to.exist;",
 									"});"
 								],
 								"type": "text/javascript"
@@ -558,10 +349,8 @@
 							"mode": "raw",
 							"raw": "{\n    \"name\": \"Network Scan - SSH\",\n    \"target_value\": \"192.168.1.0/24\",\n    \"port\": 22,\n    \"port_scan_timeout_ms\": 5000,\n    \"credential_profile_id\": \"{{credential_id}}\",\n    \"auto_provision\": true,\n    \"auto_run\": true\n}"
 						},
-						"url": "{{base_url}}/api/v1/discoveries",
-						"description": "Create a new discovery profile using CIDR notation for SSH (port 22). Set auto_run to true to trigger discovery immediately after creation. Each profile now targets a single port and uses a single credential. To scan multiple ports, create separate profiles."
+						"url": "{{base_url}}/api/v1/discoveries"
 					},
-					"response": [],
 					"event": [
 						{
 							"listen": "test",
@@ -570,110 +359,13 @@
 									"pm.test('Status code is 201', function () {",
 									"    pm.response.to.have.status(201);",
 									"});",
-									"",
-									"pm.test('Response has id', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.id).to.exist;",
-									"});",
-									"",
-									"pm.test('Response has target_value', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.target_value).to.exist;",
-									"});",
-									"",
-									"// Extract and save discovery_id",
 									"if (pm.response.code === 201) {",
 									"    const jsonData = pm.response.json();",
 									"    if (jsonData.id) {",
 									"        pm.collectionVariables.set('discovery_id', jsonData.id);",
 									"        pm.environment.set('discovery_id', jsonData.id);",
-									"        console.log('Discovery ID saved:', jsonData.id);",
 									"    }",
 									"}"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "Create Discovery (IP Range)",
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n    \"name\": \"Datacenter IP Range - WinRM\",\n    \"target_value\": \"192.168.1.1-192.168.1.50\",\n    \"port\": 5985,\n    \"port_scan_timeout_ms\": 3000,\n    \"credential_profile_id\": \"{{credential_id}}\",\n    \"auto_provision\": true,\n    \"auto_run\": false\n}"
-						},
-						"url": "{{base_url}}/api/v1/discoveries",
-						"description": "Create a new discovery profile using IP range for WinRM (port 5985). Each profile now targets a single port and uses a single credential."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test('Status code is 201', function () {",
-									"    pm.response.to.have.status(201);",
-									"});",
-									"",
-									"pm.test('Response has id', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.id).to.exist;",
-									"});",
-									"",
-									"pm.test('Response has target_value', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.target_value).to.exist;",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "Create Discovery (Single IP)",
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n    \"name\": \"Single Server - SSH\",\n    \"target_value\": \"192.168.1.100\",\n    \"port\": 22,\n    \"port_scan_timeout_ms\": 5000,\n    \"credential_profile_id\": \"{{credential_id}}\",\n    \"auto_provision\": false,\n    \"auto_run\": true\n}"
-						},
-						"url": "{{base_url}}/api/v1/discoveries",
-						"description": "Create a new discovery profile for a single IP address on SSH port. Each profile now targets a single port and uses a single credential."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test('Status code is 201', function () {",
-									"    pm.response.to.have.status(201);",
-									"});",
-									"",
-									"pm.test('Response has id', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.id).to.exist;",
-									"});",
-									"",
-									"pm.test('Response has target_value', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.target_value).to.exist;",
-									"});"
 								],
 								"type": "text/javascript"
 							}
@@ -685,10 +377,8 @@
 					"request": {
 						"method": "GET",
 						"header": [],
-						"url": "{{base_url}}/api/v1/discoveries/{{discovery_id}}",
-						"description": "Get a specific discovery profile by ID."
+						"url": "{{base_url}}/api/v1/discoveries/{{discovery_id}}"
 					},
-					"response": [],
 					"event": [
 						{
 							"listen": "test",
@@ -696,21 +386,6 @@
 								"exec": [
 									"pm.test('Status code is 200', function () {",
 									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test('Response has id', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.id).to.exist;",
-									"});",
-									"",
-									"pm.test('Response has name', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.name).to.exist;",
-									"});",
-									"",
-									"pm.test('Response has target_value', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.target_value).to.exist;",
 									"});"
 								],
 								"type": "text/javascript"
@@ -719,23 +394,43 @@
 					]
 				},
 				{
-					"name": "Update Discovery",
+					"name": "Run Discovery",
 					"request": {
-						"method": "PUT",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n    \"name\": \"Updated Network Scan - SSH\",\n    \"target_value\": \"192.168.1.0/25\",\n    \"port\": 22,\n    \"port_scan_timeout_ms\": 3000,\n    \"credential_profile_id\": \"{{credential_id}}\",\n    \"auto_provision\": true,\n    \"auto_run\": false\n}"
-						},
-						"url": "{{base_url}}/api/v1/discoveries/{{discovery_id}}",
-						"description": "Update an existing discovery profile. Uses single port and credential_profile_id."
+						"method": "POST",
+						"header": [],
+						"url": "{{base_url}}/api/v1/discoveries/{{discovery_id}}/run"
 					},
-					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 202', function () {",
+									"    pm.response.to.have.status(202);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Discovery Feed (WebSocket)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": "{{ws_url}}/ws/discovery",
+						"description": "Connect to this WebSocket endpoint to receive real-time discovery events (e.g. device found, scan complete). In Postman, switch to a WebSocket request tab and use this URL. Note: Requires 'token' query parameter or header if auth is enforced on upgrade (currently URL query param 'token' supported in many implementations, but here it relies on standard HTTP Upgrade which carries headers)."
+					},
+					"response": []
+				},
+				{
+					"name": "Get Discovery Results",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": "{{base_url}}/api/v1/discoveries/{{discovery_id}}/results"
+					},
 					"event": [
 						{
 							"listen": "test",
@@ -743,16 +438,6 @@
 								"exec": [
 									"pm.test('Status code is 200', function () {",
 									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test('Response has updated name', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.name).to.eql('Updated Network Scan');",
-									"});",
-									"",
-									"pm.test('updated_at is present', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.updated_at).to.exist;",
 									"});"
 								],
 								"type": "text/javascript"
@@ -765,10 +450,8 @@
 					"request": {
 						"method": "DELETE",
 						"header": [],
-						"url": "{{base_url}}/api/v1/discoveries/{{discovery_id}}",
-						"description": "Soft delete a discovery profile."
+						"url": "{{base_url}}/api/v1/discoveries/{{discovery_id}}"
 					},
-					"response": [],
 					"event": [
 						{
 							"listen": "test",
@@ -782,68 +465,12 @@
 							}
 						}
 					]
-				},
-				{
-					"name": "Run Discovery",
-					"request": {
-						"method": "POST",
-						"header": [],
-						"url": "{{base_url}}/api/v1/discoveries/{{discovery_id}}/run",
-						"description": "Trigger an asynchronous discovery scan. Returns immediately with 202 Accepted."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test('Status code is 202', function () {",
-									"    pm.response.to.have.status(202);",
-									"});",
-									"",
-									"pm.test('Response has status', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.status).to.equal('accepted');",
-									"});",
-									"",
-									"pm.test('Response has profile_id', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.profile_id).to.exist;",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "Get Discovery Results",
-					"request": {
-						"method": "GET",
-						"header": [],
-						"url": "{{base_url}}/api/v1/discoveries/{{discovery_id}}/results",
-						"description": "Get all discovery results for a profile including last run status and devices discovered."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test('Status code is 200', function () {",
-									"    pm.response.to.have.status(200);",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
 				}
 			]
 		},
 		{
 			"name": "Monitors",
-			"description": "Monitor (Device) management endpoints (protected). Monitors are typically created via discovery.",
+			"description": "Monitor (Device) management endpoints (protected)",
 			"item": [
 				{
 					"name": "Create Monitor (Manual)",
@@ -857,12 +484,10 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"display_name\": \"web-prod-01\",\n    \"hostname\": \"web-prod-01.internal\",\n    \"ip_address\": \"192.168.10.20\",\n    \"plugin_id\": \"windows-winrm\",\n    \"credential_profile_id\": \"{{credential_id}}\",\n    \"polling_interval_seconds\": 60,\n    \"port\": 5985\n}"
+							"raw": "{\n    \"display_name\": \"web-prod-01\",\n    \"hostname\": \"web-prod-01.internal\",\n    \"ip_address\": \"192.168.10.20\",\n    \"plugin_id\": \"windows-winrm\",\n    \"credential_profile_id\": \"{{credential_id}}\",\n    \"discovery_profile_id\": \"{{discovery_id}}\",\n    \"polling_interval_seconds\": 60,\n    \"port\": 5985\n}"
 						},
-						"url": "{{base_url}}/api/v1/monitors",
-						"description": "Manually create a monitor without discovery. Useful for 'Pet' servers outside discovery ranges, CI/CD pipeline integration, or quick testing."
+						"url": "{{base_url}}/api/v1/monitors"
 					},
-					"response": [],
 					"event": [
 						{
 							"listen": "test",
@@ -871,34 +496,11 @@
 									"pm.test('Status code is 201', function () {",
 									"    pm.response.to.have.status(201);",
 									"});",
-									"",
-									"pm.test('Response has id', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.id).to.exist;",
-									"});",
-									"",
-									"pm.test('Response has ip_address', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.ip_address).to.exist;",
-									"});",
-									"",
-									"pm.test('Response has plugin_id', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.plugin_id).to.exist;",
-									"});",
-									"",
-									"pm.test('Response has status active', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.status).to.exist;",
-									"});",
-									"",
-									"// Save monitor_id if not already set",
 									"if (pm.response.code === 201) {",
 									"    const jsonData = pm.response.json();",
 									"    if (jsonData.id) {",
 									"        pm.collectionVariables.set('monitor_id', jsonData.id);",
 									"        pm.environment.set('monitor_id', jsonData.id);",
-									"        console.log('Monitor ID saved:', jsonData.id);",
 									"    }",
 									"}"
 								],
@@ -912,10 +514,8 @@
 					"request": {
 						"method": "GET",
 						"header": [],
-						"url": "{{base_url}}/api/v1/monitors",
-						"description": "List all monitors with optional filtering by status or plugin."
+						"url": "{{base_url}}/api/v1/monitors"
 					},
-					"response": [],
 					"event": [
 						{
 							"listen": "test",
@@ -923,27 +523,7 @@
 								"exec": [
 									"pm.test('Status code is 200', function () {",
 									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test('Response has data array', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.data).to.be.an('array');",
-									"});",
-									"",
-									"pm.test('Response has total count', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.total).to.exist;",
-									"});",
-									"",
-									"// Save first monitor_id if available",
-									"if (pm.response.code === 200) {",
-									"    const jsonData = pm.response.json();",
-									"    if (jsonData.data && jsonData.data.length > 0) {",
-									"        pm.collectionVariables.set('monitor_id', jsonData.data[0].id);",
-									"        pm.environment.set('monitor_id', jsonData.data[0].id);",
-									"        console.log('Monitor ID saved:', jsonData.data[0].id);",
-									"    }",
-									"}"
+									"});"
 								],
 								"type": "text/javascript"
 							}
@@ -955,10 +535,8 @@
 					"request": {
 						"method": "GET",
 						"header": [],
-						"url": "{{base_url}}/api/v1/monitors/{{monitor_id}}",
-						"description": "Get a specific monitor by ID with full details."
+						"url": "{{base_url}}/api/v1/monitors/{{monitor_id}}"
 					},
-					"response": [],
 					"event": [
 						{
 							"listen": "test",
@@ -966,21 +544,6 @@
 								"exec": [
 									"pm.test('Status code is 200', function () {",
 									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test('Response has id', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.id).to.exist;",
-									"});",
-									"",
-									"pm.test('Response has ip_address', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.ip_address).to.exist;",
-									"});",
-									"",
-									"pm.test('Response has status', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.status).to.exist;",
 									"});"
 								],
 								"type": "text/javascript"
@@ -1000,12 +563,10 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"display_name\": \"Server-01\",\n    \"hostname\": \"server-01.local\",\n    \"ip_address\": \"192.168.1.10\",\n    \"plugin_id\": \"ssh_plugin\",\n    \"credential_profile_id\": \"{{credential_id}}\",\n    \"polling_interval_seconds\": 300,\n    \"port\": 22\n}"
+							"raw": "{\n    \"display_name\": \"Server-01 Updated\",\n    \"polling_interval_seconds\": 300\n}"
 						},
-						"url": "{{base_url}}/api/v1/monitors/{{monitor_id}}",
-						"description": "Update monitor configuration. All fields are optional - only include what you want to change."
+						"url": "{{base_url}}/api/v1/monitors/{{monitor_id}}"
 					},
-					"response": [],
 					"event": [
 						{
 							"listen": "test",
@@ -1013,53 +574,6 @@
 								"exec": [
 									"pm.test('Status code is 200', function () {",
 									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test('Response has id', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.id).to.exist;",
-									"});",
-									"",
-									"pm.test('updated_at is present', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.updated_at).to.exist;",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "Update Monitor Status",
-					"request": {
-						"method": "PATCH",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n    \"status\": \"maintenance\"\n}"
-						},
-						"url": "{{base_url}}/api/v1/monitors/{{monitor_id}}",
-						"description": "Update monitor status. Valid values: active, maintenance, down."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test('Status code is 200', function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test('Response has status field', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.status).to.exist;",
 									"});"
 								],
 								"type": "text/javascript"
@@ -1072,10 +586,8 @@
 					"request": {
 						"method": "DELETE",
 						"header": [],
-						"url": "{{base_url}}/api/v1/monitors/{{monitor_id}}",
-						"description": "Soft delete a monitor. Can be restored later."
+						"url": "{{base_url}}/api/v1/monitors/{{monitor_id}}"
 					},
-					"response": [],
 					"event": [
 						{
 							"listen": "test",
@@ -1083,16 +595,6 @@
 								"exec": [
 									"pm.test('Status code is 204', function () {",
 									"    pm.response.to.have.status(204);",
-									"});",
-									"",
-									"pm.test('Monitor is truly deleted', function () {",
-									"   // Verify subsequent GET returns 404",
-									"   pm.sendRequest({",
-									"       url: pm.variables.get('base_url') + '/api/v1/monitors/' + pm.variables.get('monitor_id'),",
-									"       method: 'GET'",
-									"   }, function (err, res) {",
-									"       pm.expect(res.code).to.eql(404);",
-									"   });",
 									"});"
 								],
 								"type": "text/javascript"
@@ -1104,7 +606,7 @@
 		},
 		{
 			"name": "Metrics",
-			"description": "Batch metrics query endpoints for querying metrics across multiple devices (protected)",
+			"description": "Batch metrics query endpoints",
 			"item": [
 				{
 					"name": "Query Metrics - Single Device",
@@ -1118,12 +620,10 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"device_ids\": [\"{{monitor_id}}\"],\n    \"start\": \"2025-12-01T00:00:00Z\",\n    \"end\": \"2025-12-31T23:59:59Z\",\n    \"metric_groups\": [\"host.cpu\", \"host.memory\"],\n    \"limit\": 50\n}"
+							"raw": "{\n    \"device_ids\": [\"{{monitor_id}}\"],\n    \"start\": \"2025-12-01T00:00:00Z\",\n    \"end\": \"2025-12-31T23:59:59Z\",\n    \"limit\": 50\n}"
 						},
-						"url": "{{base_url}}/api/v1/metrics/query",
-						"description": "Query metrics for a single device. Results are grouped by device_id in the response."
+						"url": "{{base_url}}/api/v1/metrics/query"
 					},
-					"response": [],
 					"event": [
 						{
 							"listen": "test",
@@ -1132,141 +632,9 @@
 									"pm.test('Status code is 200', function () {",
 									"    pm.response.to.have.status(200);",
 									"});",
-									"",
 									"pm.test('Response has data object', function () {",
 									"    const jsonData = pm.response.json();",
 									"    pm.expect(jsonData.data).to.exist;",
-									"});",
-									"",
-									"pm.test('Response has count', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.count).to.exist;",
-									"});",
-									"",
-									"pm.test('Response has query object', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.query).to.exist;",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "Query Metrics - Multiple Devices",
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n    \"device_ids\": [\"{{monitor_id}}\", \"00000000-0000-0000-0000-000000000000\"],\n    \"start\": \"2025-12-01T00:00:00Z\",\n    \"end\": \"2025-12-31T23:59:59Z\",\n    \"limit\": 100\n}"
-						},
-						"url": "{{base_url}}/api/v1/metrics/query",
-						"description": "Query metrics for multiple devices. Invalid device IDs are silently ignored. Results are grouped by device_id."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test('Status code is 200', function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test('Response has data object', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.data).to.exist;",
-									"});",
-									"",
-									"pm.test('Response has count', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.count).to.exist;",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "Query Metrics - Latest Only",
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n    \"device_ids\": [\"{{monitor_id}}\"],\n    \"start\": \"2025-12-01T00:00:00Z\",\n    \"end\": \"2025-12-31T23:59:59Z\",\n    \"metric_groups\": [\"host.cpu\", \"host.memory\"],\n    \"latest\": true\n}"
-						},
-						"url": "{{base_url}}/api/v1/metrics/query",
-						"description": "Get only the latest metric per device/metric_group combination. Useful for dashboards showing current status."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test('Status code is 200', function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test('Response has data object', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.data).to.exist;",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "Query Metrics - With Tag Filters",
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n    \"device_ids\": [\"{{monitor_id}}\"],\n    \"start\": \"2025-12-01T00:00:00Z\",\n    \"end\": \"2025-12-31T23:59:59Z\",\n    \"metric_groups\": [\"host.cpu\"],\n    \"tag_filters\": [\n        {\n            \"key\": \"core\",\n            \"op\": \"eq\",\n            \"values\": [\"0\"]\n        }\n    ],\n    \"limit\": 100\n}"
-						},
-						"url": "{{base_url}}/api/v1/metrics/query",
-						"description": "Query metrics with tag-based filtering for fine-grained metric selection.\n\n**Supported Tag Filter Operators:**\n\n1. **eq** (Equals) - Exact match\n   ```json\n   {\"key\": \"core\", \"op\": \"eq\", \"values\": [\"0\"]}\n   ```\n\n2. **in** (In List) - Matches any value in array\n   ```json\n   {\"key\": \"core\", \"op\": \"in\", \"values\": [\"0\", \"1\", \"2\", \"3\"]}\n   ```\n\n3. **like** (Pattern Match) - SQL LIKE with % wildcards\n   ```json\n   {\"key\": \"device\", \"op\": \"like\", \"values\": [\"eth%\"]}\n   ```\n\n4. **exists** (Key Exists) - Check if tag key exists\n   ```json\n   {\"key\": \"error\", \"op\": \"exists\", \"values\": []}\n   ```\n\n5. **gt** (Greater Than) - Numeric comparison\n   ```json\n   {\"key\": \"threshold\", \"op\": \"gt\", \"values\": [\"80\"]}\n   ```\n\n6. **lt** (Less Than) - Numeric comparison\n   ```json\n   {\"key\": \"threshold\", \"op\": \"lt\", \"values\": [\"20\"]}\n   ```\n\n7. **gte** (Greater Than or Equal) - Numeric comparison\n   ```json\n   {\"key\": \"priority\", \"op\": \"gte\", \"values\": [\"5\"]}\n   ```\n\n8. **lte** (Less Than or Equal) - Numeric comparison\n   ```json\n   {\"key\": \"priority\", \"op\": \"lte\", \"values\": [\"3\"]}\n   ```\n\n**Multiple Filters:**\nYou can combine multiple tag filters - they are applied with AND logic.\n\n**Example Use Cases:**\n- Filter CPU metrics by specific cores\n- Get network metrics for specific interfaces\n- Find metrics with error tags\n- Query metrics above/below thresholds"
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test('Status code is 200', function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test('Response has data object', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.data).to.exist;",
-									"});",
-									"",
-									"pm.test('Tag filters applied correctly', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.query.tag_filters).to.exist;",
 									"});"
 								],
 								"type": "text/javascript"
@@ -1278,17 +646,15 @@
 		},
 		{
 			"name": "Protocols",
-			"description": "Protocol information and schema endpoints (protected)",
+			"description": "Protocol information",
 			"item": [
 				{
 					"name": "List All Protocols",
 					"request": {
 						"method": "GET",
 						"header": [],
-						"url": "{{base_url}}/api/v1/protocols",
-						"description": "List all supported protocols with their metadata (default ports, transport type, etc.)."
+						"url": "{{base_url}}/api/v1/protocols"
 					},
-					"response": [],
 					"event": [
 						{
 							"listen": "test",

@@ -265,7 +265,7 @@ func (w *Worker) executeDiscovery(
 
 		// Delegated validation logic - pass the single resolved plugin (real or placeholder)
 		// We wrap it in a slice because validateTarget expects a list (though we only check one now)
-		validatedPlugin, valid := w.validateTarget(ctx, targetIP, port, creds, handshakeTimeout, []*plugins.PluginInfo{plugin}, logger)
+		validatedPlugin, hostname, valid := w.validateTarget(ctx, targetIP, port, creds, handshakeTimeout, []*plugins.PluginInfo{plugin}, logger)
 
 		if valid {
 			logger.InfoContext(ctx, "Protocol handshake succeeded",
@@ -283,6 +283,7 @@ func (w *Worker) executeDiscovery(
 				Plugin:            validatedPlugin,
 				IP:                targetIP,
 				Port:              port,
+				Hostname:          hostname,
 			}:
 				validatedCount++
 			case <-ctx.Done():
@@ -310,7 +311,7 @@ func (w *Worker) validateTarget(
 	timeout time.Duration,
 	plugins []*plugins.PluginInfo,
 	logger *slog.Logger,
-) (*plugins.PluginInfo, bool) {
+) (*plugins.PluginInfo, string, bool) {
 
 	for _, plugin := range plugins {
 		var result *HandshakeResult
@@ -332,11 +333,11 @@ func (w *Worker) validateTarget(
 		}
 
 		if result != nil && result.Success {
-			return plugin, true
+			return plugin, result.Hostname, true
 		}
 	}
 
-	return nil, false
+	return nil, "", false
 }
 
 // isPortOpen checks if a TCP port is open on the target

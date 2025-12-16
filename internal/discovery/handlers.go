@@ -43,8 +43,8 @@ func StartDiscoveryCompletionLogger(ctx context.Context, events *channels.EventC
 	}()
 }
 
-// StartProvisionHandler listens for DeviceValidatedEvent, creates DB entries, and broadcasts progress.
-func StartProvisionHandler(ctx context.Context, events *channels.EventChannels, querier dbgen.Querier, hub *Hub, logger *slog.Logger) {
+// StartProvisionHandler listens for DeviceValidatedEvent, creates DB entries, and broadcasts.
+func StartProvisionHandler(ctx context.Context, events *channels.EventChannels, querier dbgen.Querier, hub *Hub, logger *slog.Logger, provisioner *Provisioner) {
 	go func() {
 		for {
 			select {
@@ -82,47 +82,17 @@ func StartProvisionHandler(ctx context.Context, events *channels.EventChannels, 
 					continue
 				}
 
-				// 2. If auto_provision → Create monitor
+				// 2. If auto_provision → Use Provisioner
 				if event.DiscoveryProfile.AutoProvision.Valid && event.DiscoveryProfile.AutoProvision.Bool {
-					logger.InfoContext(ctx, "Auto-provision enabled, creating monitor",
-						slog.String("ip", event.IP),
-						slog.Int("port", event.Port),
-					)
-
-					monitor, err := querier.CreateMonitor(ctx, dbgen.CreateMonitorParams{
-						IpAddress:           netip.MustParseAddr(event.IP),
-						Port:                pgtype.Int4{Int32: int32(event.Port), Valid: true},
-						PluginID:            event.Plugin.Manifest.ID,
-						CredentialProfileID: event.CredentialProfile.ID,
-						DiscoveryProfileID:  event.DiscoveryProfile.ID,
-					})
-					if err != nil {
-						logger.ErrorContext(ctx, "Failed to create monitor",
-							slog.String("plugin", event.Plugin.Manifest.ID),
+					if err := provisioner.ProvisionFromEvent(ctx, event); err != nil {
+						logger.ErrorContext(ctx, "Failed to auto-provision monitor",
 							slog.String("error", err.Error()),
+							slog.String("ip", event.IP),
 						)
-						continue
-					}
-
-					logger.InfoContext(ctx, "Monitor created via auto-provision",
-						slog.String("ip", event.IP),
-						slog.String("plugin", event.Plugin.Manifest.ID),
-					)
-
-					// 3. Emit cache invalidation for the new monitor
-					fullMonitor, err := querier.GetMonitorWithCredentials(ctx, monitor.ID)
-					if err != nil {
-						logger.Error("failed to fetch created monitor for cache invalidation", "error", err)
-						continue
-					}
-
-					select {
-					case events.CacheInvalidate <- channels.CacheInvalidateEvent{
-						UpdateType: "update",
-						Monitors:   []dbgen.GetMonitorWithCredentialsRow{fullMonitor},
-					}:
-					case <-ctx.Done():
-						return
+					} else {
+						logger.InfoContext(ctx, "Monitor created via auto-provision",
+							slog.String("ip", event.IP),
+						)
 					}
 				}
 

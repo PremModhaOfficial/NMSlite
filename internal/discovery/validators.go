@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/gosnmp/gosnmp"
@@ -15,6 +16,7 @@ type HandshakeResult struct {
 	Success  bool
 	Protocol string
 	Error    string
+	Hostname string
 	Metadata map[string]interface{}
 }
 
@@ -78,9 +80,20 @@ func ValidateSSH(target string, port int, creds *plugins.Credentials, timeout ti
 	}
 	defer client.Close()
 
+	// Try to fetch hostname
+	var hostname string
+	session, err := client.NewSession()
+	if err == nil {
+		defer session.Close()
+		if out, err := session.Output("hostname"); err == nil {
+			hostname = strings.TrimSpace(string(out))
+		}
+	}
+
 	return &HandshakeResult{
 		Success:  true,
 		Protocol: "ssh",
+		Hostname: hostname,
 		Metadata: map[string]interface{}{
 			"remote_version": string(client.ServerVersion()),
 		},
@@ -112,9 +125,18 @@ func ValidateWinRM(target string, port int, creds *plugins.Credentials, timeout 
 	}
 	defer shell.Close()
 
+	// Try to fetch hostname using the shell
+	var hostname string
+	// Using RunWithString to execute a simple command
+	stdout, _, _, err := client.RunWithString("hostname", "")
+	if err == nil {
+		hostname = strings.TrimSpace(stdout)
+	}
+
 	return &HandshakeResult{
 		Success:  true,
 		Protocol: "winrm",
+		Hostname: hostname,
 		Metadata: map[string]interface{}{
 			"shell_id": "unknown", // shell ID not exposed in current winrm API
 		},
@@ -142,8 +164,8 @@ func ValidateSNMPv2c(target string, port int, creds *plugins.Credentials, timeou
 	}
 	defer g.Conn.Close()
 
-	// Perform a simple GetRequest to sysDescr OID (1.3.6.1.2.1.1.1.0)
-	oids := []string{"1.3.6.1.2.1.1.1.0"}
+	// Perform a GetRequest to sysDescr (1.3.6.1.2.1.1.1.0) and sysName (1.3.6.1.2.1.1.5.0)
+	oids := []string{"1.3.6.1.2.1.1.1.0", "1.3.6.1.2.1.1.5.0"}
 	result, err := g.Get(oids)
 	if err != nil {
 		return &HandshakeResult{
@@ -153,15 +175,21 @@ func ValidateSNMPv2c(target string, port int, creds *plugins.Credentials, timeou
 		}, nil
 	}
 
-	// Extract sysDescr value
-	var sysDescr string
-	if len(result.Variables) > 0 {
-		sysDescr = fmt.Sprintf("%v", result.Variables[0].Value)
+	// Extract values
+	var sysDescr, hostname string
+	for _, variable := range result.Variables {
+		switch variable.Name {
+		case ".1.3.6.1.2.1.1.1.0":
+			sysDescr = fmt.Sprintf("%v", variable.Value)
+		case ".1.3.6.1.2.1.1.5.0":
+			hostname = fmt.Sprintf("%v", variable.Value)
+		}
 	}
 
 	return &HandshakeResult{
 		Success:  true,
 		Protocol: "snmp-v2c",
+		Hostname: hostname,
 		Metadata: map[string]interface{}{
 			"sysDescr": sysDescr,
 		},
@@ -268,8 +296,8 @@ func ValidateSNMPv3(target string, port int, creds *plugins.Credentials, timeout
 	}
 	defer g.Conn.Close()
 
-	// Perform a simple GetRequest to sysDescr OID (1.3.6.1.2.1.1.1.0)
-	oids := []string{"1.3.6.1.2.1.1.1.0"}
+	// Perform a GetRequest to sysDescr (1.3.6.1.2.1.1.1.0) and sysName (1.3.6.1.2.1.1.5.0)
+	oids := []string{"1.3.6.1.2.1.1.1.0", "1.3.6.1.2.1.1.5.0"}
 	result, err := g.Get(oids)
 	if err != nil {
 		return &HandshakeResult{
@@ -279,15 +307,21 @@ func ValidateSNMPv3(target string, port int, creds *plugins.Credentials, timeout
 		}, nil
 	}
 
-	// Extract sysDescr value
-	var sysDescr string
-	if len(result.Variables) > 0 {
-		sysDescr = fmt.Sprintf("%v", result.Variables[0].Value)
+	// Extract values
+	var sysDescr, hostname string
+	for _, variable := range result.Variables {
+		switch variable.Name {
+		case ".1.3.6.1.2.1.1.1.0":
+			sysDescr = fmt.Sprintf("%v", variable.Value)
+		case ".1.3.6.1.2.1.1.5.0":
+			hostname = fmt.Sprintf("%v", variable.Value)
+		}
 	}
 
 	return &HandshakeResult{
 		Success:  true,
 		Protocol: "snmp-v3",
+		Hostname: hostname,
 		Metadata: map[string]interface{}{
 			"sysDescr":       sysDescr,
 			"security_level": creds.SecurityLevel,

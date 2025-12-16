@@ -12,7 +12,7 @@ server:
 
 # TLS Configuration (Required for production)
 tls:
-  enabled: true
+  enabled: false
   cert_file: "./certs/server.crt"
   key_file: "./certs/server.key"
 

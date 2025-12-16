@@ -17,6 +17,7 @@ type Querier interface {
 	CreateDiscoveryProfile(ctx context.Context, arg CreateDiscoveryProfileParams) (DiscoveryProfile, error)
 	CreateMonitor(ctx context.Context, arg CreateMonitorParams) (Monitor, error)
 	DeleteCredentialProfile(ctx context.Context, id uuid.UUID) error
+	DeleteDiscoveredDevice(ctx context.Context, id uuid.UUID) error
 	DeleteDiscoveryProfile(ctx context.Context, id uuid.UUID) error
 	DeleteMonitor(ctx context.Context, id uuid.UUID) error
 	// Get all unique metric names (for discovery/autocomplete)
@@ -42,6 +43,7 @@ type Querier interface {
 	// Loads active monitors with their credential data in a single query.
 	// Used by scheduler to initialize cache at startup.
 	ListActiveMonitorsWithCredentials(ctx context.Context) ([]ListActiveMonitorsWithCredentialsRow, error)
+	ListAllDiscoveredDevices(ctx context.Context) ([]DiscoveredDevice, error)
 	ListCredentialProfiles(ctx context.Context) ([]CredentialProfile, error)
 	ListDiscoveredDevices(ctx context.Context, discoveryProfileID uuid.NullUUID) ([]DiscoveredDevice, error)
 	ListDiscoveryProfiles(ctx context.Context) ([]DiscoveryProfile, error)

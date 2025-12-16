@@ -42,8 +42,8 @@ clean:
 build-plugin-winrm:
 	@echo "Building windows-winrm plugin..."
 	@mkdir -p plugin_bins/windows-winrm
-	cd plugins/windows-winrm && go mod tidy && go build -o ../../plugin_bins/windows-winrm/windows-winrm .
-	cp plugins/windows-winrm/manifest.json plugin_bins/windows-winrm/manifest.json
+	cd plugin/windows-winrm && go mod tidy && go build -o ../../plugin_bins/windows-winrm/windows-winrm .
+	cp plugin/windows-winrm/manifest.json plugin_bins/windows-winrm/manifest.json
 	@echo "Plugin built: plugin_bins/windows-winrm/"
 
 # Build all pluginManager

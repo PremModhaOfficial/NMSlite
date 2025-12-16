@@ -17,7 +17,7 @@ import (
 )
 
 // NewRouter NewRouter creates and configures the API router
-func NewRouter(authService *auth.Service, db *pgxpool.Pool, events *channels.EventChannels, hub *discovery.Hub) http.Handler {
+func NewRouter(authService *auth.Service, db *pgxpool.Pool, events *channels.EventChannels, hub *discovery.Hub, provisioner *discovery.Provisioner) http.Handler {
 	cfg := globals.GetConfig()
 	logger := slog.Default()
 	r := chi.NewRouter()
@@ -99,6 +99,9 @@ func NewRouter(authService *auth.Service, db *pgxpool.Pool, events *channels.Eve
 				r.Delete("/{id}", monitorHandler.Delete)
 
 			})
+
+			// Discovered Devices
+			r.Mount("/discovered-devices", handlers.NewDiscoveredDeviceHandler(queries, provisioner).Routes())
 
 			// Metrics queries (batch)
 			r.Post("/metrics/query", monitorHandler.QueryMetrics)
