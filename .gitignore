@@ -36,3 +36,5 @@ internal/database/db_gen/internal/database/db_gen/
 plugin_bins/*
 ./plugins/windows-winrm/windows-winrm
 certs
+node_modules/
+
