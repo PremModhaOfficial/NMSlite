@@ -55,7 +55,6 @@ func NewRouter(authService *auth2.Service, db *pgxpool.Pool, events *globals.Eve
 
 	// Public routes (no auth required)
 	r.Get("/health", healthHandler.Health)
-	r.Get("/ready", healthHandler.Ready)
 
 	// Websocket route
 	r.Get("/ws/discovery", discoveryHandler.HandleWS)
@@ -99,8 +98,8 @@ func NewRouter(authService *auth2.Service, db *pgxpool.Pool, events *globals.Eve
 
 			})
 
-			// Discovered Devices
-			r.Mount("/discovered-devices", handlers.NewDiscoveredDeviceHandler(queries, provisioner).Routes())
+			// Devices (discovered devices)
+			r.Mount("/devices", handlers.NewDeviceHandler(queries, provisioner).Routes())
 
 			// Metrics queries (batch)
 			r.Post("/metrics/query", monitorHandler.QueryMetrics)

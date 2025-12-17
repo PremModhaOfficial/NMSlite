@@ -91,14 +91,26 @@ func (q *Queries) GetLatestMetricsByDeviceAndPrefix(ctx context.Context, arg Get
 }
 
 const getMetricsByDeviceAndPrefix = `-- name: GetMetricsByDeviceAndPrefix :many
-SELECT timestamp, device_id, name, value, type
-FROM metrics
-WHERE device_id = ANY($1::uuid[])
-  AND name LIKE $2  -- e.g., 'system.%' for subtree
-  AND timestamp >= $3
-  AND timestamp <= $4
-ORDER BY timestamp DESC
-LIMIT $5
+SELECT m.timestamp, m.device_id, m.name, m.value, m.type
+FROM (
+  SELECT DISTINCT metrics.device_id, metrics.name
+  FROM metrics
+  WHERE metrics.device_id = ANY($1::uuid[])
+    AND metrics.name LIKE $2
+    AND metrics.timestamp >= $3
+    AND metrics.timestamp <= $4
+) groups
+CROSS JOIN LATERAL (
+  SELECT metrics.timestamp, metrics.device_id, metrics.name, metrics.value, metrics.type
+  FROM metrics
+  WHERE metrics.device_id = groups.device_id
+    AND metrics.name = groups.name
+    AND metrics.timestamp >= $3
+    AND metrics.timestamp <= $4
+  ORDER BY metrics.timestamp DESC
+  LIMIT $5
+) m
+ORDER BY m.device_id, m.name, m.timestamp DESC
 `
 
 type GetMetricsByDeviceAndPrefixParams struct {
@@ -109,7 +121,8 @@ type GetMetricsByDeviceAndPrefixParams struct {
 	LimitCount        int32              `json:"limit_count"`
 }
 
-// Query metrics for devices with prefix matching (SNMP subtree style)
+// Query metrics for devices with per-metric limiting using LATERAL JOIN
+// Returns top N rows per (device_id, metric_name) group ordered by timestamp DESC
 func (q *Queries) GetMetricsByDeviceAndPrefix(ctx context.Context, arg GetMetricsByDeviceAndPrefixParams) ([]Metric, error) {
 	rows, err := q.db.Query(ctx, getMetricsByDeviceAndPrefix,
 		arg.DeviceIds,

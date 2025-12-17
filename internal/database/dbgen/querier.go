@@ -30,7 +30,8 @@ type Querier interface {
 	GetExistingMonitorIDs(ctx context.Context, monitorIds []uuid.UUID) ([]uuid.UUID, error)
 	// Query the latest value for each metric (per device) with prefix matching
 	GetLatestMetricsByDeviceAndPrefix(ctx context.Context, arg GetLatestMetricsByDeviceAndPrefixParams) ([]Metric, error)
-	// Query metrics for devices with prefix matching (SNMP subtree style)
+	// Query metrics for devices with per-metric limiting using LATERAL JOIN
+	// Returns top N rows per (device_id, metric_name) group ordered by timestamp DESC
 	GetMetricsByDeviceAndPrefix(ctx context.Context, arg GetMetricsByDeviceAndPrefixParams) ([]Metric, error)
 	GetMonitor(ctx context.Context, id uuid.UUID) (Monitor, error)
 	// Fetches a single monitor with its credential data.

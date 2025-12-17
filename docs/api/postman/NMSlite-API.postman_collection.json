@@ -76,32 +76,6 @@
 					]
 				},
 				{
-					"name": "Readiness Check",
-					"request": {
-						"method": "GET",
-						"header": [],
-						"url": "{{base_url}}/ready",
-						"description": "Readiness probe - checks if the service is ready to accept requests (database, queue, plugins)"
-					},
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test('Status code is 200 or 503', function () {",
-									"    pm.expect(pm.response.code).to.be.oneOf([200, 503]);",
-									"});",
-									"pm.test('Response has checks object', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.checks).to.exist;",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
 					"name": "Login",
 					"request": {
 						"method": "POST",
@@ -606,10 +580,10 @@
 		},
 		{
 			"name": "Metrics",
-			"description": "Batch metrics query endpoints",
+			"description": "Batch metrics query endpoints for polling data (CPU, disk, memory, etc.)",
 			"item": [
 				{
-					"name": "Query Metrics - Single Device",
+					"name": "Query Metrics - All Metrics",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -622,7 +596,8 @@
 							"mode": "raw",
 							"raw": "{\n    \"device_ids\": [\"{{monitor_id}}\"],\n    \"start\": \"2025-12-01T00:00:00Z\",\n    \"end\": \"2025-12-31T23:59:59Z\",\n    \"limit\": 50\n}"
 						},
-						"url": "{{base_url}}/api/v1/metrics/query"
+						"url": "{{base_url}}/api/v1/metrics/query",
+						"description": "Query all metrics for a device within a time range."
 					},
 					"event": [
 						{
@@ -635,6 +610,161 @@
 									"pm.test('Response has data object', function () {",
 									"    const jsonData = pm.response.json();",
 									"    pm.expect(jsonData.data).to.exist;",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Query Metrics - CPU Only (prefix)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"device_ids\": [\"{{monitor_id}}\"],\n    \"prefix\": \"system.cpu\",\n    \"start\": \"2025-12-01T00:00:00Z\",\n    \"end\": \"2025-12-31T23:59:59Z\",\n    \"limit\": 100\n}"
+						},
+						"url": "{{base_url}}/api/v1/metrics/query",
+						"description": "Query only CPU metrics using prefix filter. Matches metrics like system.cpu.usage, system.cpu.core.0, etc."
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Query Metrics - Disk Only (prefix)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"device_ids\": [\"{{monitor_id}}\"],\n    \"prefix\": \"system.disk\",\n    \"start\": \"2025-12-01T00:00:00Z\",\n    \"end\": \"2025-12-31T23:59:59Z\",\n    \"limit\": 100\n}"
+						},
+						"url": "{{base_url}}/api/v1/metrics/query",
+						"description": "Query only disk metrics using prefix filter."
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Query Metrics - Memory Only (prefix)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"device_ids\": [\"{{monitor_id}}\"],\n    \"prefix\": \"system.memory\",\n    \"start\": \"2025-12-01T00:00:00Z\",\n    \"end\": \"2025-12-31T23:59:59Z\",\n    \"limit\": 100\n}"
+						},
+						"url": "{{base_url}}/api/v1/metrics/query",
+						"description": "Query only memory metrics using prefix filter."
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Query Metrics - Latest Values Only",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"device_ids\": [\"{{monitor_id}}\"],\n    \"start\": \"2025-12-01T00:00:00Z\",\n    \"end\": \"2025-12-31T23:59:59Z\",\n    \"latest\": true\n}"
+						},
+						"url": "{{base_url}}/api/v1/metrics/query",
+						"description": "Query only the latest value for each metric (deduped by metric name). Useful for dashboards."
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Query Metrics - Multiple Devices",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"device_ids\": [\"{{monitor_id}}\", \"00000000-0000-0000-0000-000000000000\"],\n    \"prefix\": \"system.cpu\",\n    \"start\": \"2025-12-01T00:00:00Z\",\n    \"end\": \"2025-12-31T23:59:59Z\",\n    \"latest\": true\n}"
+						},
+						"url": "{{base_url}}/api/v1/metrics/query",
+						"description": "Query metrics for multiple devices at once. Results are grouped by device_id."
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
 									"});"
 								],
 								"type": "text/javascript"
@@ -663,6 +793,107 @@
 									"pm.test('Status code is 200', function () {",
 									"    pm.response.to.have.status(200);",
 									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				}
+			]
+		},
+		{
+			"name": "Devices",
+			"description": "Device management endpoints (discovered devices awaiting provisioning)",
+			"item": [
+				{
+					"name": "List All Devices",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": "{{base_url}}/api/v1/devices",
+						"description": "List all discovered devices. Optionally filter by discovery_profile_id query parameter."
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "List Devices by Discovery Profile",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": "{{base_url}}/api/v1/devices?discovery_profile_id={{discovery_id}}",
+						"description": "List discovered devices filtered by discovery profile ID."
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Delete Device",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": "{{base_url}}/api/v1/devices/{{device_id}}",
+						"description": "Delete a discovered device by ID."
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 204', function () {",
+									"    pm.response.to.have.status(204);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Provision Device",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": "{{base_url}}/api/v1/devices/{{device_id}}/provision",
+						"description": "Provision a discovered device, creating a monitor from it."
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"if (pm.response.code === 200) {",
+									"    const jsonData = pm.response.json();",
+									"    if (jsonData.monitor_id) {",
+									"        pm.collectionVariables.set('monitor_id', jsonData.monitor_id);",
+									"        pm.environment.set('monitor_id', jsonData.monitor_id);",
+									"    }",
+									"}"
 								],
 								"type": "text/javascript"
 							}
