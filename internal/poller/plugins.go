@@ -84,11 +84,17 @@ func (m *PluginManager) Scan() error {
 			continue
 		}
 
+		absBinaryPath, err := filepath.Abs(binaryPath)
+		if err != nil {
+			m.logger.Warn("Failed to resolve absolute path for binary", "plugin", pluginName, "error", err)
+			continue
+		}
+
 		// Register plugin
 		info := &globals.PluginInfo{
 			Name:       pluginMeta.Name,
 			Protocol:   pluginMeta.Protocol,
-			BinaryPath: binaryPath,
+			BinaryPath: absBinaryPath,
 		}
 
 		// Enforce 1:1 Protocol mapping (last one wins if duplicate, or error? User said 1:1)

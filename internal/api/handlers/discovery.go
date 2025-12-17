@@ -3,25 +3,23 @@ package handlers
 import (
 	"context"
 	"net/http"
+	"strconv"
 	"time"
 
-	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/nmslite/nmslite/internal/api/common"
 	"github.com/nmslite/nmslite/internal/database/dbgen"
-	"github.com/nmslite/nmslite/internal/discovery"
 	"github.com/nmslite/nmslite/internal/globals"
 )
 
 // DiscoveryHandler handles discovery profile endpoints
 type DiscoveryHandler struct {
 	Deps *common.Dependencies
-	hub  *discovery.Hub
 }
 
-func NewDiscoveryHandler(deps *common.Dependencies, hub *discovery.Hub) *DiscoveryHandler {
+func NewDiscoveryHandler(deps *common.Dependencies) *DiscoveryHandler {
 	return &DiscoveryHandler{
 		Deps: deps,
-		hub:  hub,
 	}
 }
 
@@ -81,7 +79,7 @@ func (h *DiscoveryHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 // Get handles GET /{id} requests
 func (h *DiscoveryHandler) Get(w http.ResponseWriter, r *http.Request) {
-	id, ok := common.ParseUUIDParam(w, r, "id")
+	id, ok := common.ParseIDParam(w, r, "id")
 	if !ok {
 		return
 	}
@@ -100,7 +98,7 @@ func (h *DiscoveryHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 // Update handles PUT/PATCH /{id} requests
 func (h *DiscoveryHandler) Update(w http.ResponseWriter, r *http.Request) {
-	id, ok := common.ParseUUIDParam(w, r, "id")
+	id, ok := common.ParseIDParam(w, r, "id")
 	if !ok {
 		return
 	}
@@ -149,7 +147,7 @@ func (h *DiscoveryHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 // Delete handles DELETE /{id} requests
 func (h *DiscoveryHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	id, ok := common.ParseUUIDParam(w, r, "id")
+	id, ok := common.ParseIDParam(w, r, "id")
 	if !ok {
 		return
 	}
@@ -162,7 +160,7 @@ func (h *DiscoveryHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	common.SendJSON(w, http.StatusNoContent, nil)
 }
 
-func triggerDiscovery(ctx context.Context, deps *common.Dependencies, id uuid.UUID) {
+func triggerDiscovery(ctx context.Context, deps *common.Dependencies, id int64) {
 	if deps.Events == nil {
 		return
 	}
@@ -180,7 +178,7 @@ func triggerDiscovery(ctx context.Context, deps *common.Dependencies, id uuid.UU
 
 // Run handles POST /api/v1/discoveries/{id}/run
 func (h *DiscoveryHandler) Run(w http.ResponseWriter, r *http.Request) {
-	id, ok := common.ParseUUIDParam(w, r, "id")
+	id, ok := common.ParseIDParam(w, r, "id")
 	if !ok {
 		return
 	}
@@ -196,26 +194,21 @@ func (h *DiscoveryHandler) Run(w http.ResponseWriter, r *http.Request) {
 	common.SendJSON(w, http.StatusAccepted, map[string]interface{}{
 		"status":     "accepted",
 		"message":    "Discovery started",
-		"profile_id": id.String(),
+		"profile_id": strconv.FormatInt(id, 10),
 	})
 }
 
 // GetResults handles GET /api/v1/discoveries/{id}/results
 func (h *DiscoveryHandler) GetResults(w http.ResponseWriter, r *http.Request) {
-	id, ok := common.ParseUUIDParam(w, r, "id")
+	id, ok := common.ParseIDParam(w, r, "id")
 	if !ok {
 		return
 	}
 
-	results, err := h.Deps.Q.ListDiscoveredDevices(r.Context(), uuid.NullUUID{UUID: id, Valid: true})
+	results, err := h.Deps.Q.ListDiscoveredDevices(r.Context(), pgtype.Int8{Int64: id, Valid: true})
 	if common.HandleDBError(w, r, err, "Discovery results") {
 		return
 	}
 
 	common.SendListResponse(w, results, len(results))
-}
-
-// HandleWS handles websocket connections for discovery progress
-func (h *DiscoveryHandler) HandleWS(w http.ResponseWriter, r *http.Request) {
-	h.hub.ServeWs(w, r)
 }

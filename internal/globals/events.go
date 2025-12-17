@@ -4,7 +4,6 @@ package globals
 import (
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/nmslite/nmslite/internal/api/auth"
 	"github.com/nmslite/nmslite/internal/database/dbgen"
 	// "github.com/nmslite/nmslite/internal/poller" - REMOVED
@@ -35,14 +34,16 @@ type PollResult struct {
 }
 
 // DiscoveryRequestEvent is published when a discovery begins execution
+// DiscoveryRequestEvent is published when a discovery begins execution
 type DiscoveryRequestEvent struct {
-	ProfileID uuid.UUID
+	ProfileID int64
 	StartedAt time.Time
 }
 
 // DiscoveryStatusEvent is published when a discovery finishes
+// DiscoveryStatusEvent is published when a discovery finishes
 type DiscoveryStatusEvent struct {
-	ProfileID    uuid.UUID
+	ProfileID    int64
 	Status       string // "success", "partial", "failed"
 	DevicesFound int
 	StartedAt    time.Time
@@ -60,8 +61,9 @@ type DeviceValidatedEvent struct {
 }
 
 // MonitorStateEvent is published when a monitor state changes
+// MonitorStateEvent is published when a monitor state changes
 type MonitorStateEvent struct {
-	MonitorID uuid.UUID
+	MonitorID int64
 	IP        string
 	EventType string // "down", "recovered"
 	Failures  int    // only used when EventType == "down"
@@ -73,7 +75,7 @@ type MonitorStateEvent struct {
 type CacheInvalidateEvent struct {
 	UpdateType string                               // "update", "delete"
 	Monitors   []dbgen.GetMonitorWithCredentialsRow // For "update"
-	MonitorIDs []uuid.UUID                          // For "delete"
+	MonitorIDs []int64                              // For "delete"
 }
 
 // EventChannels provides typed channels for all system events

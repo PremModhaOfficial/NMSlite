@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nmslite/nmslite/internal/globals"
@@ -16,7 +15,7 @@ import (
 
 // MetricRecord represents a metric ready for database insertion (key-value format)
 type MetricRecord struct {
-	MonitorID uuid.UUID
+	MonitorID int64
 	Timestamp time.Time
 	Name      string
 	Value     float64

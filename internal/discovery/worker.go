@@ -10,7 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
+	"strconv"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	auth2 "github.com/nmslite/nmslite/internal/api/auth"
@@ -24,15 +25,17 @@ type Worker struct {
 	events        *globals.EventChannels
 	querier       dbgen.Querier
 	pluginManager *poller.PluginManager // Renamed from registry
-	// executor    *plugins.Executor - REMOVED (not used in discovery)
-	credentials *auth2.CredentialService
-	authService *auth2.Service
-	logger      *slog.Logger
+	credentials   *auth2.CredentialService
+	authService   *auth2.Service
+	logger        *slog.Logger
+
+	// discoverySem limits concurrent validation goroutines
+	discoverySem chan struct{}
 
 	// runningMu protects runningProfiles
 	runningMu sync.RWMutex
 	// runningProfiles tracks which profiles are currently running
-	runningProfiles map[uuid.UUID]bool
+	runningProfiles map[int64]bool
 }
 
 // NewWorker creates a new discovery worker instance with plugin support.
@@ -40,20 +43,25 @@ func NewWorker(
 	events *globals.EventChannels,
 	querier dbgen.Querier,
 	pluginManager *poller.PluginManager,
-	// executor *plugins.Executor, - REMOVED
 	credentials *auth2.CredentialService,
 	authService *auth2.Service,
 	logger *slog.Logger,
 ) *Worker {
+	// Get max workers from config with inline default
+	maxWorkers := globals.GetConfig().Discovery.MaxDiscoveryWorkers
+	if maxWorkers <= 0 {
+		maxWorkers = 10
+	}
+
 	return &Worker{
-		events:        events,
-		querier:       querier,
-		pluginManager: pluginManager,
-		// executor:        executor,
+		events:          events,
+		querier:         querier,
+		pluginManager:   pluginManager,
 		credentials:     credentials,
 		authService:     authService,
 		logger:          logger,
-		runningProfiles: make(map[uuid.UUID]bool),
+		discoverySem:    make(chan struct{}, maxWorkers),
+		runningProfiles: make(map[int64]bool),
 	}
 }
 
@@ -86,7 +94,7 @@ func (w *Worker) Run(ctx context.Context) error {
 // handleDiscoveryStartedEvent processes a single discovery start event.
 func (w *Worker) handleDiscoveryStartedEvent(ctx context.Context, event globals.DiscoveryRequestEvent) {
 	logger := w.logger.With(
-		slog.String("profile_id", event.ProfileID.String()),
+		slog.String("profile_id", strconv.FormatInt(event.ProfileID, 10)),
 		slog.String("started_at", event.StartedAt.Format(time.RFC3339)),
 	)
 
@@ -232,7 +240,7 @@ func (w *Worker) executeDiscovery(
 		slog.Int("ip_count", len(targetIPs)),
 		slog.String("target_type", string(DetectTargetType(decryptedTarget))),
 		slog.Int("port", port),
-		slog.String("credential_id", credentialID.String()),
+		slog.String("credential_id", strconv.FormatInt(credentialID, 10)),
 		slog.String("protocol", credProfile.Protocol),
 	)
 
@@ -266,25 +274,57 @@ func (w *Worker) executeDiscovery(
 		return 0, 0, fmt.Errorf("failed to decrypt credentials: %w", err)
 	}
 
-	validatedCount := 0
+	// Validation result struct for collecting parallel results
+	type validationResult struct {
+		ip       string
+		plugin   *globals.PluginInfo
+		hostname string
+		valid    bool
+	}
 
-	// For each IP address in the expanded target
+	resultsChan := make(chan validationResult, len(targetIPs))
+	var wg sync.WaitGroup
+
+	// Parallel IP validation with semaphore-based concurrency control
 	for _, targetIP := range targetIPs {
-		// Check context cancellation
-		if err := ctx.Err(); err != nil {
-			return validatedCount, len(targetIPs), fmt.Errorf("discovery cancelled: %w", err)
-		}
+		targetIP := targetIP // capture for goroutine
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 
-		// Delegated validation logic - pass the single resolved plugin (real or placeholder)
-		// We wrap it in a slice because validateTarget expects a list (though we only check one now)
-		validatedPlugin, hostname, valid := w.validateTarget(ctx, targetIP, port, creds, handshakeTimeout, []*globals.PluginInfo{plugin}, logger)
+			// Acquire semaphore (blocks if at max concurrent workers)
+			select {
+			case w.discoverySem <- struct{}{}:
+				defer func() { <-w.discoverySem }()
+			case <-ctx.Done():
+				resultsChan <- validationResult{ip: targetIP, valid: false}
+				return
+			}
 
-		if valid {
+			// Perform validation
+			validatedPlugin, hostname, valid := w.validateTarget(ctx, targetIP, port, creds, handshakeTimeout, []*globals.PluginInfo{plugin}, logger)
+			resultsChan <- validationResult{
+				ip:       targetIP,
+				plugin:   validatedPlugin,
+				hostname: hostname,
+				valid:    valid,
+			}
+		}()
+	}
+
+	// Wait for all goroutines to complete, then close channel
+	wg.Wait()
+	close(resultsChan)
+
+	// Collect results and publish events
+	validatedCount := 0
+	for result := range resultsChan {
+		if result.valid {
 			logger.InfoContext(ctx, "Protocol handshake succeeded",
-				slog.String("ip", targetIP),
+				slog.String("ip", result.ip),
 				slog.Int("port", port),
-				slog.String("protocol", validatedPlugin.Protocol),
-				slog.String("credential_id", credentialID.String()),
+				slog.String("protocol", result.plugin.Protocol),
+				slog.String("credential_id", strconv.FormatInt(credentialID, 10)),
 			)
 
 			// Publish DeviceValidatedEvent - handler creates DB entries
@@ -292,10 +332,10 @@ func (w *Worker) executeDiscovery(
 			case w.events.DeviceValidated <- globals.DeviceValidatedEvent{
 				DiscoveryProfile:  profile,
 				CredentialProfile: credProfile,
-				Plugin:            validatedPlugin,
-				IP:                targetIP,
+				Plugin:            result.plugin,
+				IP:                result.ip,
 				Port:              port,
-				Hostname:          hostname,
+				Hostname:          result.hostname,
 			}:
 				validatedCount++
 			case <-ctx.Done():
@@ -305,7 +345,7 @@ func (w *Worker) executeDiscovery(
 			}
 		} else {
 			logger.DebugContext(ctx, "No valid handshake for IP",
-				slog.String("ip", targetIP),
+				slog.String("ip", result.ip),
 				slog.Int("port", port),
 			)
 		}
@@ -331,7 +371,7 @@ func (w *Worker) validateTarget(
 		switch plugin.Protocol {
 		case "ssh":
 			result, _ = ValidateSSH(ip, port, creds, timeout)
-		case "winrm":
+		case "windows-winrm":
 			result, _ = ValidateWinRM(ip, port, creds, timeout)
 		case "snmp-v2c":
 			result, _ = ValidateSNMPv2c(ip, port, creds, timeout)
@@ -374,25 +414,25 @@ func (w *Worker) publishCompletedEvent(
 	select {
 	case w.events.DiscoveryStatus <- completedEvent:
 		w.logger.DebugContext(ctx, "Published discovery completed event",
-			slog.String("profile_id", event.ProfileID.String()),
+			slog.String("profile_id", strconv.FormatInt(event.ProfileID, 10)),
 			slog.String("status", statusStr),
 			slog.Int("devices_found", deviceCount),
 		)
 	case <-ctx.Done():
 		w.logger.WarnContext(ctx, "Context cancelled while publishing completion event",
-			slog.String("profile_id", event.ProfileID.String()),
+			slog.String("profile_id", strconv.FormatInt(event.ProfileID, 10)),
 		)
 	default:
 		// Channel full - log warning
 		w.logger.WarnContext(ctx, "DiscoveryCompleted channel full, event dropped",
-			slog.String("profile_id", event.ProfileID.String()),
+			slog.String("profile_id", strconv.FormatInt(event.ProfileID, 10)),
 			slog.String("status", statusStr),
 		)
 	}
 }
 
-// StartDiscoveryCompletionLogger starts a goroutine that logs discovery completion events AND broadcasts them.
-func StartDiscoveryCompletionLogger(ctx context.Context, events *globals.EventChannels, hub *Hub, logger *slog.Logger) {
+// StartDiscoveryCompletionLogger starts a goroutine that logs discovery completion events.
+func StartDiscoveryCompletionLogger(ctx context.Context, events *globals.EventChannels, logger *slog.Logger) {
 	go func() {
 		for {
 			select {
@@ -401,18 +441,11 @@ func StartDiscoveryCompletionLogger(ctx context.Context, events *globals.EventCh
 					return
 				}
 				logger.InfoContext(ctx, "Discovery completed",
-					slog.String("profile_id", event.ProfileID.String()),
+					slog.String("profile_id", strconv.FormatInt(event.ProfileID, 10)),
 					slog.String("status", event.Status),
 					slog.Int("devices_found", event.DevicesFound),
 					slog.String("duration", event.CompletedAt.Sub(event.StartedAt).String()),
 				)
-
-				// Broadcast to websocket
-				hub.Broadcast("status_change", event.ProfileID, map[string]interface{}{
-					"status":        event.Status,
-					"devices_found": event.DevicesFound,
-					"duration":      event.CompletedAt.Sub(event.StartedAt).String(),
-				})
 
 			case <-ctx.Done():
 				return
@@ -423,8 +456,8 @@ func StartDiscoveryCompletionLogger(ctx context.Context, events *globals.EventCh
 	}()
 }
 
-// StartProvisionHandler listens for DeviceValidatedEvent, creates DB entries, and broadcasts.
-func StartProvisionHandler(ctx context.Context, events *globals.EventChannels, querier dbgen.Querier, hub *Hub, logger *slog.Logger, provisioner *Provisioner) {
+// StartProvisionHandler listens for DeviceValidatedEvent and creates DB entries.
+func StartProvisionHandler(ctx context.Context, events *globals.EventChannels, querier dbgen.Querier, logger *slog.Logger, provisioner *Provisioner) {
 	go func() {
 		for {
 			select {
@@ -439,17 +472,9 @@ func StartProvisionHandler(ctx context.Context, events *globals.EventChannels, q
 					slog.String("protocol", event.Plugin.Protocol),
 				)
 
-				// Broadcast device found event immediately
-				hub.Broadcast("device_found", event.DiscoveryProfile.ID, map[string]interface{}{
-					"ip":       event.IP,
-					"port":     event.Port,
-					"protocol": event.Plugin.Protocol,
-					"plugin":   event.Plugin.Name,
-				})
-
 				// 1. Create discovered_devices entry
 				_, err := querier.CreateDiscoveredDevice(ctx, dbgen.CreateDiscoveredDeviceParams{
-					DiscoveryProfileID: uuid.NullUUID{UUID: event.DiscoveryProfile.ID, Valid: true},
+					DiscoveryProfileID: pgtype.Int8{Int64: event.DiscoveryProfile.ID, Valid: true},
 					IpAddress:          netip.MustParseAddr(event.IP),
 					Port:               int32(event.Port),
 					Status:             pgtype.Text{String: "validated", Valid: true},

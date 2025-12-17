@@ -389,16 +389,6 @@
 					]
 				},
 				{
-					"name": "Discovery Feed (WebSocket)",
-					"request": {
-						"method": "GET",
-						"header": [],
-						"url": "{{ws_url}}/ws/discovery",
-						"description": "Connect to this WebSocket endpoint to receive real-time discovery events (e.g. device found, scan complete). In Postman, switch to a WebSocket request tab and use this URL. Note: Requires 'token' query parameter or header if auth is enforced on upgrade (currently URL query param 'token' supported in many implementations, but here it relies on standard HTTP Upgrade which carries headers)."
-					},
-					"response": []
-				},
-				{
 					"name": "Get Discovery Results",
 					"request": {
 						"method": "GET",

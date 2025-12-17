@@ -38,13 +38,13 @@ func TestStrictValidation(t *testing.T) {
 		},
 		{
 			name:        "Valid WinRM",
-			protocol:    "winrm",
+			protocol:    "windows-winrm",
 			payload:     `{"username": "admin", "password": "password"}`,
 			expectError: false,
 		},
 		{
 			name:        "WinRM with Port (Should Fail)",
-			protocol:    "winrm",
+			protocol:    "windows-winrm",
 			payload:     `{"username": "admin", "password": "password", "port": 5985}`,
 			expectError: true,
 			errorMsg:    "contains forbidden field",

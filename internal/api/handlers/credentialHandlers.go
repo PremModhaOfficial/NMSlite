@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/google/uuid"
 	"github.com/nmslite/nmslite/internal/api/common"
 	"github.com/nmslite/nmslite/internal/database/dbgen"
 	"github.com/nmslite/nmslite/internal/globals"
@@ -83,7 +82,7 @@ func (h *CredentialHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 // Get handles GET /{id} requests
 func (h *CredentialHandler) Get(w http.ResponseWriter, r *http.Request) {
-	id, ok := common.ParseUUIDParam(w, r, "id")
+	id, ok := common.ParseIDParam(w, r, "id")
 	if !ok {
 		return
 	}
@@ -104,7 +103,7 @@ func (h *CredentialHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 // Update handles PUT/PATCH /{id} requests
 func (h *CredentialHandler) Update(w http.ResponseWriter, r *http.Request) {
-	id, ok := common.ParseUUIDParam(w, r, "id")
+	id, ok := common.ParseIDParam(w, r, "id")
 	if !ok {
 		return
 	}
@@ -152,7 +151,7 @@ func (h *CredentialHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 // Delete handles DELETE /{id} requests
 func (h *CredentialHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	id, ok := common.ParseUUIDParam(w, r, "id")
+	id, ok := common.ParseIDParam(w, r, "id")
 	if !ok {
 		return
 	}
@@ -166,7 +165,7 @@ func (h *CredentialHandler) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 // pushUpdate fetches all monitors using this credential profile and pushes them to scheduler
-func (h *CredentialHandler) pushUpdate(ctx context.Context, credentialID uuid.UUID) {
+func (h *CredentialHandler) pushUpdate(ctx context.Context, credentialID int64) {
 	if h.Deps.Events == nil {
 		return
 	}

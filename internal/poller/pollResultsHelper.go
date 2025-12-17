@@ -6,27 +6,26 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/nmslite/nmslite/internal/globals"
 	// plugins "github.com/nmslite/nmslite/internal/plugins" - REMOVED
 )
 
-// ResultWriter handles writing poll results to the database via BatchWriter
-type ResultWriter struct {
+// PollResultWriter handles writing poll results to the database via BatchWriter
+type PollResultWriter struct {
 	logger      *slog.Logger
 	batchWriter *BatchWriter
 }
 
-// NewResultWriter creates a new ResultWriter
-func NewResultWriter(batchWriter *BatchWriter) *ResultWriter {
-	return &ResultWriter{
+// NewPollResultWriter creates a new PollResultWriter
+func NewPollResultWriter(batchWriter *BatchWriter) *PollResultWriter {
+	return &PollResultWriter{
 		batchWriter: batchWriter,
 		logger:      slog.Default(),
 	}
 }
 
 // Write processes poll results and submits metrics to BatchWriter for bulk insertion
-func (w *ResultWriter) Write(ctx context.Context, monitorID uuid.UUID, results []globals.PollResult) {
+func (w *PollResultWriter) Write(ctx context.Context, monitorID int64, results []globals.PollResult) {
 	timestamp := time.Now()
 
 	for _, result := range results {
@@ -92,7 +91,7 @@ func (w *ResultWriter) Write(ctx context.Context, monitorID uuid.UUID, results [
 
 // parseMetricsFromPlugin converts plugin output to typed MetricRecord
 // raw is expected to be an array of metric objects from the plugin
-func parseMetricsFromPlugin(monitorID uuid.UUID, timestamp time.Time, raw []interface{}) ([]MetricRecord, error) {
+func parseMetricsFromPlugin(monitorID int64, timestamp time.Time, raw []interface{}) ([]MetricRecord, error) {
 	if raw == nil {
 		return nil, fmt.Errorf("raw metrics data is nil")
 	}
@@ -121,7 +120,7 @@ func parseMetricsFromPlugin(monitorID uuid.UUID, timestamp time.Time, raw []inte
 }
 
 // parseMetricFromMap converts a map to a MetricRecord struct
-func parseMetricFromMap(data map[string]interface{}, monitorID uuid.UUID, defaultTimestamp time.Time) (MetricRecord, error) {
+func parseMetricFromMap(data map[string]interface{}, monitorID int64, defaultTimestamp time.Time) (MetricRecord, error) {
 	record := MetricRecord{
 		Timestamp: defaultTimestamp,
 		MonitorID: monitorID,

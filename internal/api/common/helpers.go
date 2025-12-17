@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/nmslite/nmslite/internal/api/auth"
 )
@@ -39,13 +39,18 @@ func SendError(w http.ResponseWriter, r *http.Request, status int, code, message
 	json.NewEncoder(w).Encode(response)
 }
 
-// ParseUUIDParam extracts and validates a UUID from URL params
-func ParseUUIDParam(w http.ResponseWriter, r *http.Request, param string) (uuid.UUID, bool) {
+// ParseIDParam extracts and validates an int64 ID from URL params
+func ParseIDParam(w http.ResponseWriter, r *http.Request, param string) (int64, bool) {
 	idStr := chi.URLParam(r, param)
-	id, err := uuid.Parse(idStr)
+	if idStr == "" {
+		SendError(w, r, http.StatusBadRequest, "MISSING_ID", "Missing ID parameter", nil)
+		return 0, false
+	}
+
+	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		SendError(w, r, http.StatusBadRequest, "INVALID_ID", "Invalid UUID format", err)
-		return uuid.Nil, false
+		SendError(w, r, http.StatusBadRequest, "INVALID_ID", "Invalid ID format", err)
+		return 0, false
 	}
 	return id, true
 }

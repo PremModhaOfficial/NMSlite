@@ -48,7 +48,7 @@ func newRegistry() *Registry {
 func (r *Registry) initializeProtocols() {
 	// WinRM Protocol
 	r.registerProtocol(&Protocol{
-		ID:   "winrm",
+		ID:   "windows-winrm",
 		Name: "Windows Server (WinRM)",
 	}, reflect.TypeOf(WinRMCredentials{}))
 

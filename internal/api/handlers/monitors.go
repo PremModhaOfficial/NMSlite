@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/nmslite/nmslite/internal/api/common"
 	"github.com/nmslite/nmslite/internal/database/dbgen"
@@ -75,7 +75,7 @@ func (h *MonitorHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 // Get handles GET /{id} requests
 func (h *MonitorHandler) Get(w http.ResponseWriter, r *http.Request) {
-	id, ok := common.ParseUUIDParam(w, r, "id")
+	id, ok := common.ParseIDParam(w, r, "id")
 	if !ok {
 		return
 	}
@@ -90,7 +90,7 @@ func (h *MonitorHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 // Update handles PUT/PATCH /{id} requests
 func (h *MonitorHandler) Update(w http.ResponseWriter, r *http.Request) {
-	id, ok := common.ParseUUIDParam(w, r, "id")
+	id, ok := common.ParseIDParam(w, r, "id")
 	if !ok {
 		return
 	}
@@ -132,7 +132,7 @@ func (h *MonitorHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if input.PluginID != "" {
 		params.PluginID = input.PluginID
 	}
-	if input.CredentialProfileID != uuid.Nil {
+	if input.CredentialProfileID != 0 {
 		params.CredentialProfileID = input.CredentialProfileID
 	}
 	if input.PollingIntervalSeconds.Valid {
@@ -157,7 +157,7 @@ func (h *MonitorHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 // Delete handles DELETE /{id} requests
 func (h *MonitorHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	id, ok := common.ParseUUIDParam(w, r, "id")
+	id, ok := common.ParseIDParam(w, r, "id")
 	if !ok {
 		return
 	}
@@ -173,7 +173,7 @@ func (h *MonitorHandler) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 // pushUpdate fetches the joined monitor data and sends it to the scheduler
-func (h *MonitorHandler) pushUpdate(ctx context.Context, id uuid.UUID) {
+func (h *MonitorHandler) pushUpdate(ctx context.Context, id int64) {
 	if h.Deps.Events == nil {
 		return
 	}
@@ -191,13 +191,13 @@ func (h *MonitorHandler) pushUpdate(ctx context.Context, id uuid.UUID) {
 }
 
 // pushDelete sends a delete signal to the scheduler
-func (h *MonitorHandler) pushDelete(ctx context.Context, id uuid.UUID) {
+func (h *MonitorHandler) pushDelete(ctx context.Context, id int64) {
 	if h.Deps.Events == nil {
 		return
 	}
 	h.Deps.Events.CacheInvalidate <- globals.CacheInvalidateEvent{
 		UpdateType: "delete",
-		MonitorIDs: []uuid.UUID{id},
+		MonitorIDs: []int64{id},
 	}
 }
 
@@ -208,10 +208,10 @@ func (h *MonitorHandler) validateMonitorInput(input dbgen.Monitor) error {
 	if input.PluginID == "" {
 		return fmt.Errorf("plugin_id is required")
 	}
-	if input.CredentialProfileID == uuid.Nil {
+	if input.CredentialProfileID == 0 {
 		return fmt.Errorf("credential_profile_id is required")
 	}
-	if input.DiscoveryProfileID == uuid.Nil {
+	if input.DiscoveryProfileID == 0 {
 		return fmt.Errorf("discovery_profile_id is required")
 	}
 	return nil
@@ -220,18 +220,24 @@ func (h *MonitorHandler) validateMonitorInput(input dbgen.Monitor) error {
 // Metrics Query Logic
 
 type MetricsQueryRequest struct {
-	DeviceIDs []uuid.UUID `json:"device_ids"`
-	Prefix    string      `json:"prefix,omitempty"`
-	Start     time.Time   `json:"start"`
-	End       time.Time   `json:"end"`
-	Limit     int         `json:"limit,omitempty"`
-	Latest    bool        `json:"latest,omitempty"`
+	DeviceIDs []int64   `json:"device_ids"`
+	Prefix    string    `json:"prefix,omitempty"`
+	Start     time.Time `json:"start"`
+	End       time.Time `json:"end"`
+	Limit     int       `json:"limit,omitempty"`
+	Latest    bool      `json:"latest,omitempty"`
+}
+
+// MetricDataPoint represents a single metric value at a point in time
+type MetricDataPoint struct {
+	Timestamp time.Time `json:"timestamp"`
+	Value     float64   `json:"value"`
 }
 
 type MetricsQueryResponse struct {
-	Data  map[string]map[string]float64 `json:"data"`
-	Count int                           `json:"count"`
-	Query MetricsQueryRequest           `json:"query"`
+	Data  map[string]map[string][]MetricDataPoint `json:"data"`
+	Count int                                     `json:"count"`
+	Query MetricsQueryRequest                     `json:"query"`
 }
 
 func (h *MonitorHandler) QueryMetrics(w http.ResponseWriter, r *http.Request) {
@@ -256,9 +262,9 @@ func (h *MonitorHandler) QueryMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(validIDs) == 0 {
-		emptyData := make(map[string]map[string]float64)
+		emptyData := make(map[string]map[string][]MetricDataPoint)
 		for _, id := range req.DeviceIDs {
-			emptyData[id.String()] = make(map[string]float64)
+			emptyData[strconv.FormatInt(id, 10)] = make(map[string][]MetricDataPoint)
 		}
 		common.SendJSON(w, http.StatusOK, MetricsQueryResponse{Data: emptyData, Query: req})
 		return
@@ -275,15 +281,15 @@ func (h *MonitorHandler) QueryMetrics(w http.ResponseWriter, r *http.Request) {
 		dbRows, err = h.Deps.Q.GetLatestMetricsByDeviceAndPrefix(r.Context(), dbgen.GetLatestMetricsByDeviceAndPrefixParams{
 			DeviceIds:         validIDs,
 			MetricNamePattern: prefix,
-			StartTime:         pgtype.Timestamptz{Time: req.Start, Valid: true},
-			EndTime:           pgtype.Timestamptz{Time: req.End, Valid: true},
+			StartTime:         req.Start,
+			EndTime:           req.End,
 		})
 	} else {
 		dbRows, err = h.Deps.Q.GetMetricsByDeviceAndPrefix(r.Context(), dbgen.GetMetricsByDeviceAndPrefixParams{
 			DeviceIds:         validIDs,
 			MetricNamePattern: prefix,
-			StartTime:         pgtype.Timestamptz{Time: req.Start, Valid: true},
-			EndTime:           pgtype.Timestamptz{Time: req.End, Valid: true},
+			StartTime:         req.Start,
+			EndTime:           req.End,
 			LimitCount:        int32(req.Limit),
 		})
 	}
@@ -292,22 +298,22 @@ func (h *MonitorHandler) QueryMetrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Group Data
-	groupedData := make(map[string]map[string]float64)
+	// Group Data - now stores time-series arrays
+	groupedData := make(map[string]map[string][]MetricDataPoint)
 	for _, id := range req.DeviceIDs {
-		groupedData[id.String()] = make(map[string]float64)
+		groupedData[strconv.FormatInt(id, 10)] = make(map[string][]MetricDataPoint)
 	}
 
 	count := 0
 	for _, row := range dbRows {
-		did := row.DeviceID.String()
+		did := strconv.FormatInt(row.DeviceID, 10)
 		if _, exists := groupedData[did]; !exists {
-			groupedData[did] = make(map[string]float64)
+			groupedData[did] = make(map[string][]MetricDataPoint)
 		}
-		if _, exists := groupedData[did][row.Name]; !exists {
-			groupedData[did][row.Name] = row.Value
-			count++
-		}
+		groupedData[did][row.Name] = append(groupedData[did][row.Name], MetricDataPoint{
+			Timestamp: row.Timestamp,
+		})
+		count++
 	}
 
 	common.SendJSON(w, http.StatusOK, MetricsQueryResponse{

@@ -64,7 +64,7 @@ WHERE id = $1;
 -- name: GetExistingMonitorIDs :many
 -- Returns only monitor IDs that exist and are not soft-deleted.
 -- Used to validate a batch of IDs before metrics queries.
-SELECT id FROM monitors WHERE id = ANY(sqlc.arg(monitor_ids)::uuid[]);
+SELECT id FROM monitors WHERE id = ANY(sqlc.arg(monitor_ids)::bigint[]);
 
 -- name: GetMonitorWithCredentials :one
 -- Fetches a single monitor with its credential data.

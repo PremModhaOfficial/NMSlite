@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/google/uuid"
 	"github.com/nmslite/nmslite/internal/database/dbgen"
 	// "github.com/nmslite/nmslite/internal/plugins" - REMOVED
 )
@@ -47,7 +46,7 @@ func NewCredentialService(authService *Service, querier dbgen.Querier) *Credenti
 }
 
 // GetDecrypted fetches and decrypts a credential profile
-func (s *CredentialService) GetDecrypted(ctx context.Context, profileID uuid.UUID) (*Credentials, error) {
+func (s *CredentialService) GetDecrypted(ctx context.Context, profileID int64) (*Credentials, error) {
 	// Fetch credential profile
 	profile, err := s.querier.GetCredentialProfile(ctx, profileID)
 	if err != nil {

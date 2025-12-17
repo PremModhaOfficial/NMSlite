@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"net/netip"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -38,8 +37,8 @@ type CreateMonitorParams struct {
 	Hostname               pgtype.Text `json:"hostname"`
 	IpAddress              netip.Addr  `json:"ip_address"`
 	PluginID               string      `json:"plugin_id"`
-	CredentialProfileID    uuid.UUID   `json:"credential_profile_id"`
-	DiscoveryProfileID     uuid.UUID   `json:"discovery_profile_id"`
+	CredentialProfileID    int64       `json:"credential_profile_id"`
+	DiscoveryProfileID     int64       `json:"discovery_profile_id"`
 	Port                   pgtype.Int4 `json:"port"`
 	PollingIntervalSeconds pgtype.Int4 `json:"polling_interval_seconds"`
 	Status                 pgtype.Text `json:"status"`
@@ -80,26 +79,26 @@ DELETE FROM monitors
 WHERE id = $1
 `
 
-func (q *Queries) DeleteMonitor(ctx context.Context, id uuid.UUID) error {
+func (q *Queries) DeleteMonitor(ctx context.Context, id int64) error {
 	_, err := q.db.Exec(ctx, deleteMonitor, id)
 	return err
 }
 
 const getExistingMonitorIDs = `-- name: GetExistingMonitorIDs :many
-SELECT id FROM monitors WHERE id = ANY($1::uuid[])
+SELECT id FROM monitors WHERE id = ANY($1::bigint[])
 `
 
 // Returns only monitor IDs that exist and are not soft-deleted.
 // Used to validate a batch of IDs before metrics queries.
-func (q *Queries) GetExistingMonitorIDs(ctx context.Context, monitorIds []uuid.UUID) ([]uuid.UUID, error) {
+func (q *Queries) GetExistingMonitorIDs(ctx context.Context, monitorIds []int64) ([]int64, error) {
 	rows, err := q.db.Query(ctx, getExistingMonitorIDs, monitorIds)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []uuid.UUID
+	var items []int64
 	for rows.Next() {
-		var id uuid.UUID
+		var id int64
 		if err := rows.Scan(&id); err != nil {
 			return nil, err
 		}
@@ -116,7 +115,7 @@ SELECT id, display_name, hostname, ip_address, plugin_id, credential_profile_id,
 WHERE id = $1
 `
 
-func (q *Queries) GetMonitor(ctx context.Context, id uuid.UUID) (Monitor, error) {
+func (q *Queries) GetMonitor(ctx context.Context, id int64) (Monitor, error) {
 	row := q.db.QueryRow(ctx, getMonitor, id)
 	var i Monitor
 	err := row.Scan(
@@ -148,13 +147,13 @@ WHERE m.id = $1
 `
 
 type GetMonitorWithCredentialsRow struct {
-	ID                     uuid.UUID          `json:"id"`
+	ID                     int64              `json:"id"`
 	DisplayName            pgtype.Text        `json:"display_name"`
 	Hostname               pgtype.Text        `json:"hostname"`
 	IpAddress              netip.Addr         `json:"ip_address"`
 	PluginID               string             `json:"plugin_id"`
-	CredentialProfileID    uuid.UUID          `json:"credential_profile_id"`
-	DiscoveryProfileID     uuid.UUID          `json:"discovery_profile_id"`
+	CredentialProfileID    int64              `json:"credential_profile_id"`
+	DiscoveryProfileID     int64              `json:"discovery_profile_id"`
 	Port                   pgtype.Int4        `json:"port"`
 	PollingIntervalSeconds pgtype.Int4        `json:"polling_interval_seconds"`
 	Status                 pgtype.Text        `json:"status"`
@@ -165,7 +164,7 @@ type GetMonitorWithCredentialsRow struct {
 
 // Fetches a single monitor with its credential data.
 // Used for efficient cache invalidation.
-func (q *Queries) GetMonitorWithCredentials(ctx context.Context, id uuid.UUID) (GetMonitorWithCredentialsRow, error) {
+func (q *Queries) GetMonitorWithCredentials(ctx context.Context, id int64) (GetMonitorWithCredentialsRow, error) {
 	row := q.db.QueryRow(ctx, getMonitorWithCredentials, id)
 	var i GetMonitorWithCredentialsRow
 	err := row.Scan(
@@ -190,15 +189,15 @@ const getMonitorsByCredentialID = `-- name: GetMonitorsByCredentialID :many
 SELECT id FROM monitors WHERE credential_profile_id = $1
 `
 
-func (q *Queries) GetMonitorsByCredentialID(ctx context.Context, credentialProfileID uuid.UUID) ([]uuid.UUID, error) {
+func (q *Queries) GetMonitorsByCredentialID(ctx context.Context, credentialProfileID int64) ([]int64, error) {
 	rows, err := q.db.Query(ctx, getMonitorsByCredentialID, credentialProfileID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []uuid.UUID
+	var items []int64
 	for rows.Next() {
-		var id uuid.UUID
+		var id int64
 		if err := rows.Scan(&id); err != nil {
 			return nil, err
 		}
@@ -222,13 +221,13 @@ WHERE m.credential_profile_id = $1
 `
 
 type GetMonitorsWithCredentialsByCredentialIDRow struct {
-	ID                     uuid.UUID          `json:"id"`
+	ID                     int64              `json:"id"`
 	DisplayName            pgtype.Text        `json:"display_name"`
 	Hostname               pgtype.Text        `json:"hostname"`
 	IpAddress              netip.Addr         `json:"ip_address"`
 	PluginID               string             `json:"plugin_id"`
-	CredentialProfileID    uuid.UUID          `json:"credential_profile_id"`
-	DiscoveryProfileID     uuid.UUID          `json:"discovery_profile_id"`
+	CredentialProfileID    int64              `json:"credential_profile_id"`
+	DiscoveryProfileID     int64              `json:"discovery_profile_id"`
 	Port                   pgtype.Int4        `json:"port"`
 	PollingIntervalSeconds pgtype.Int4        `json:"polling_interval_seconds"`
 	Status                 pgtype.Text        `json:"status"`
@@ -239,7 +238,7 @@ type GetMonitorsWithCredentialsByCredentialIDRow struct {
 
 // Fetches all monitors using a specific credential profile, with their credential data.
 // Used for efficient cache invalidation when a credential profile changes.
-func (q *Queries) GetMonitorsWithCredentialsByCredentialID(ctx context.Context, credentialProfileID uuid.UUID) ([]GetMonitorsWithCredentialsByCredentialIDRow, error) {
+func (q *Queries) GetMonitorsWithCredentialsByCredentialID(ctx context.Context, credentialProfileID int64) ([]GetMonitorsWithCredentialsByCredentialIDRow, error) {
 	rows, err := q.db.Query(ctx, getMonitorsWithCredentialsByCredentialID, credentialProfileID)
 	if err != nil {
 		return nil, err
@@ -285,13 +284,13 @@ WHERE m.status = 'active'
 `
 
 type ListActiveMonitorsWithCredentialsRow struct {
-	ID                     uuid.UUID          `json:"id"`
+	ID                     int64              `json:"id"`
 	DisplayName            pgtype.Text        `json:"display_name"`
 	Hostname               pgtype.Text        `json:"hostname"`
 	IpAddress              netip.Addr         `json:"ip_address"`
 	PluginID               string             `json:"plugin_id"`
-	CredentialProfileID    uuid.UUID          `json:"credential_profile_id"`
-	DiscoveryProfileID     uuid.UUID          `json:"discovery_profile_id"`
+	CredentialProfileID    int64              `json:"credential_profile_id"`
+	DiscoveryProfileID     int64              `json:"discovery_profile_id"`
 	Port                   pgtype.Int4        `json:"port"`
 	PollingIntervalSeconds pgtype.Int4        `json:"polling_interval_seconds"`
 	Status                 pgtype.Text        `json:"status"`
@@ -391,12 +390,12 @@ RETURNING id, display_name, hostname, ip_address, plugin_id, credential_profile_
 `
 
 type UpdateMonitorParams struct {
-	ID                     uuid.UUID   `json:"id"`
+	ID                     int64       `json:"id"`
 	DisplayName            pgtype.Text `json:"display_name"`
 	Hostname               pgtype.Text `json:"hostname"`
 	IpAddress              netip.Addr  `json:"ip_address"`
 	PluginID               string      `json:"plugin_id"`
-	CredentialProfileID    uuid.UUID   `json:"credential_profile_id"`
+	CredentialProfileID    int64       `json:"credential_profile_id"`
 	PollingIntervalSeconds pgtype.Int4 `json:"polling_interval_seconds"`
 	Port                   pgtype.Int4 `json:"port"`
 	Status                 pgtype.Text `json:"status"`
@@ -439,7 +438,7 @@ WHERE id = $1
 `
 
 type UpdateMonitorStatusParams struct {
-	ID     uuid.UUID   `json:"id"`
+	ID     int64       `json:"id"`
 	Status pgtype.Text `json:"status"`
 }
 

@@ -21,10 +21,10 @@ func TestRegistryInitialization(t *testing.T) {
 	}
 
 	expected := map[string]bool{
-		"winrm":    false,
-		"ssh":      false,
-		"snmp-v2c": false,
-		"snmp-v3":  false,
+		"windows-winrm": false,
+		"ssh":           false,
+		"snmp-v2c":      false,
+		"snmp-v3":       false,
 	}
 
 	for _, p := range protocols {
@@ -49,7 +49,7 @@ func TestGetProtocol(t *testing.T) {
 		protocolID  string
 		shouldExist bool
 	}{
-		{"WinRM", "winrm", true},
+		{"WinRM", "windows-winrm", true},
 		{"SSH", "ssh", true},
 		{"SNMP", "snmp-v2c", true},
 		{"Invalid", "invalid-protocol", false},
@@ -86,7 +86,7 @@ func TestGetCredentialType(t *testing.T) {
 		protocolID  string
 		shouldExist bool
 	}{
-		{"WinRM Credential Type", "winrm", true},
+		{"WinRM Credential Type", "windows-winrm", true},
 		{"SSH Credential Type", "ssh", true},
 		{"SNMP Credential Type", "snmp-v2c", true},
 		{"Invalid Credential Type", "invalid", false},
@@ -154,7 +154,7 @@ func TestValidateWinRMCredentials(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := registry.ValidateCredentials("winrm", toJSON(t, tc.creds))
+			_, err := registry.ValidateCredentials("windows-winrm", toJSON(t, tc.creds))
 
 			if tc.shouldErr && err == nil {
 				t.Error("Expected validation error, but got none")
@@ -253,7 +253,7 @@ func TestValidationErrorFormat(t *testing.T) {
 	registry := GetRegistry()
 
 	// Test with invalid WinRM credentials (missing required fields)
-	_, err := registry.ValidateCredentials("winrm", toJSON(t, map[string]any{}))
+	_, err := registry.ValidateCredentials("windows-winrm", toJSON(t, map[string]any{}))
 	if err == nil {
 		t.Fatal("Expected validation error, but got none")
 	}

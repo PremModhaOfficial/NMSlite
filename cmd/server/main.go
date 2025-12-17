@@ -64,19 +64,15 @@ func main() {
 	pluginManager, credService := startDiscoveryWorker(ctx, pool, events, authService)
 	startScheduler(ctx, pool, pluginManager, credService, events, batchWriter)
 
-	// Initialize Websocket Hub
-	hub := discovery.NewHub()
-	go hub.Run()
-
 	// Initialize Provisioner
 	provisioner := discovery.NewProvisioner(dbgen.New(pool), events, pluginManager, logger)
 
-	// Start Discovery Handlers (now in discovery package, using Hub)
-	discovery.StartProvisionHandler(ctx, events, dbgen.New(pool), hub, logger, provisioner)
-	discovery.StartDiscoveryCompletionLogger(ctx, events, hub, slog.Default())
+	// Start Discovery Handlers
+	discovery.StartProvisionHandler(ctx, events, dbgen.New(pool), logger, provisioner)
+	discovery.StartDiscoveryCompletionLogger(ctx, events, slog.Default())
 
 	// Start HTTP server
-	srv := initHTTPServer(authService, pool, events, hub, provisioner)
+	srv := initHTTPServer(authService, pool, events, provisioner)
 	go startServer(srv)
 
 	// Wait for shutdown signal
@@ -212,7 +208,7 @@ func startScheduler(
 	events *globals.EventChannels,
 	batchWriter *poller.BatchWriter,
 ) {
-	resultWriter := poller.NewResultWriter(batchWriter)
+	resultWriter := poller.NewPollResultWriter(batchWriter)
 
 	scheduler := poller.NewSchedulerImpl(
 		dbgen.New(db), // Wrap pool with sqlc querier - pool is still shared
@@ -236,9 +232,9 @@ func startScheduler(
 	)
 }
 
-func initHTTPServer(authService *auth2.Service, db *pgxpool.Pool, events *globals.EventChannels, hub *discovery.Hub, provisioner *discovery.Provisioner) *http.Server {
+func initHTTPServer(authService *auth2.Service, db *pgxpool.Pool, events *globals.EventChannels, provisioner *discovery.Provisioner) *http.Server {
 	cfg := globals.GetConfig()
-	router := api.NewRouter(authService, db, events, hub, provisioner)
+	router := api.NewRouter(authService, db, events, provisioner)
 	return &http.Server{
 		Addr:         fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
 		Handler:      router,

@@ -2,7 +2,7 @@
 -- +goose StatementBegin
 
 CREATE TABLE IF NOT EXISTS credential_profiles (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id BIGINT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
     name VARCHAR(255) NOT NULL,
     description TEXT,
     protocol VARCHAR(50) NOT NULL,
@@ -16,12 +16,12 @@ CREATE INDEX IF NOT EXISTS idx_credential_profiles_protocol ON credential_profil
 CREATE INDEX IF NOT EXISTS idx_credential_profiles_deleted_at ON credential_profiles(deleted_at) WHERE deleted_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS discovery_profiles (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id BIGINT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
     name VARCHAR(255) NOT NULL,
     target_value TEXT NOT NULL,
     port INTEGER NOT NULL,
     port_scan_timeout_ms INT DEFAULT 1000,
-    credential_profile_id UUID NOT NULL REFERENCES credential_profiles(id),
+    credential_profile_id BIGINT NOT NULL REFERENCES credential_profiles(id),
     last_run_at TIMESTAMPTZ,
     last_run_status VARCHAR(50),
     devices_discovered INT DEFAULT 0,
@@ -37,13 +37,13 @@ CREATE INDEX IF NOT EXISTS idx_discovery_profiles_credential ON discovery_profil
 CREATE INDEX IF NOT EXISTS idx_discovery_profiles_port ON discovery_profiles(port);
 
 CREATE TABLE IF NOT EXISTS monitors (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id BIGINT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
     display_name VARCHAR(255),
     hostname VARCHAR(255),
     ip_address INET NOT NULL,
     plugin_id VARCHAR(100) NOT NULL,
-    credential_profile_id UUID NOT NULL REFERENCES credential_profiles(id),
-    discovery_profile_id UUID NOT NULL REFERENCES discovery_profiles(id),
+    credential_profile_id BIGINT NOT NULL REFERENCES credential_profiles(id),
+    discovery_profile_id BIGINT NOT NULL REFERENCES discovery_profiles(id),
     polling_interval_seconds INT DEFAULT 60,
     status VARCHAR(50) DEFAULT 'active',
     created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -59,8 +59,8 @@ CREATE INDEX IF NOT EXISTS idx_monitors_deleted_at ON monitors(deleted_at) WHERE
 CREATE INDEX IF NOT EXISTS idx_monitors_active ON monitors(id) WHERE status = 'active' AND deleted_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS discovered_devices (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    discovery_profile_id UUID REFERENCES discovery_profiles(id) ON DELETE CASCADE,
+    id BIGINT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    discovery_profile_id BIGINT REFERENCES discovery_profiles(id) ON DELETE CASCADE,
     ip_address INET NOT NULL,
     port INT NOT NULL,
     status VARCHAR(50) DEFAULT 'new',
@@ -73,7 +73,7 @@ CREATE INDEX IF NOT EXISTS idx_discovered_devices_status ON discovered_devices(s
 
 CREATE TABLE IF NOT EXISTS metrics (
     timestamp TIMESTAMPTZ NOT NULL,
-    device_id UUID NOT NULL REFERENCES monitors(id) ON DELETE CASCADE,
+    device_id BIGINT NOT NULL REFERENCES monitors(id) ON DELETE CASCADE,
     name VARCHAR(255) NOT NULL,
     value DOUBLE PRECISION NOT NULL,
     type VARCHAR(20) DEFAULT 'gauge'

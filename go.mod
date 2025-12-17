@@ -48,7 +48,6 @@ require (
 
 require (
 	github.com/go-playground/validator/v10 v10.28.0
-	github.com/gorilla/websocket v1.5.3
 	github.com/gosnmp/gosnmp v1.37.0
 	github.com/masterzen/winrm v0.0.0-20231227165926-e811dad5ac77
 	github.com/pressly/goose/v3 v3.26.0

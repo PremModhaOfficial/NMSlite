@@ -7,46 +7,46 @@ package dbgen
 import (
 	"context"
 
-	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type Querier interface {
-	ClearDiscoveredDevices(ctx context.Context, discoveryProfileID uuid.NullUUID) error
+	ClearDiscoveredDevices(ctx context.Context, discoveryProfileID pgtype.Int8) error
 	CreateCredentialProfile(ctx context.Context, arg CreateCredentialProfileParams) (CredentialProfile, error)
 	CreateDiscoveredDevice(ctx context.Context, arg CreateDiscoveredDeviceParams) (DiscoveredDevice, error)
 	CreateDiscoveryProfile(ctx context.Context, arg CreateDiscoveryProfileParams) (DiscoveryProfile, error)
 	CreateMonitor(ctx context.Context, arg CreateMonitorParams) (Monitor, error)
-	DeleteCredentialProfile(ctx context.Context, id uuid.UUID) error
-	DeleteDiscoveredDevice(ctx context.Context, id uuid.UUID) error
-	DeleteDiscoveryProfile(ctx context.Context, id uuid.UUID) error
-	DeleteMonitor(ctx context.Context, id uuid.UUID) error
+	DeleteCredentialProfile(ctx context.Context, id int64) error
+	DeleteDiscoveredDevice(ctx context.Context, id int64) error
+	DeleteDiscoveryProfile(ctx context.Context, id int64) error
+	DeleteMonitor(ctx context.Context, id int64) error
 	// Get all unique metric names (for discovery/autocomplete)
-	GetAllMetricNames(ctx context.Context, deviceIds []uuid.UUID) ([]string, error)
-	GetCredentialProfile(ctx context.Context, id uuid.UUID) (CredentialProfile, error)
-	GetDiscoveredDevice(ctx context.Context, id uuid.UUID) (DiscoveredDevice, error)
-	GetDiscoveryProfile(ctx context.Context, id uuid.UUID) (DiscoveryProfile, error)
+	GetAllMetricNames(ctx context.Context, deviceIds []int64) ([]string, error)
+	GetCredentialProfile(ctx context.Context, id int64) (CredentialProfile, error)
+	GetDiscoveredDevice(ctx context.Context, id int64) (DiscoveredDevice, error)
+	GetDiscoveryProfile(ctx context.Context, id int64) (DiscoveryProfile, error)
 	// Returns only monitor IDs that exist and are not soft-deleted.
 	// Used to validate a batch of IDs before metrics queries.
-	GetExistingMonitorIDs(ctx context.Context, monitorIds []uuid.UUID) ([]uuid.UUID, error)
+	GetExistingMonitorIDs(ctx context.Context, monitorIds []int64) ([]int64, error)
 	// Query the latest value for each metric (per device) with prefix matching
 	GetLatestMetricsByDeviceAndPrefix(ctx context.Context, arg GetLatestMetricsByDeviceAndPrefixParams) ([]Metric, error)
 	// Query metrics for devices with per-metric limiting using LATERAL JOIN
 	// Returns top N rows per (device_id, metric_name) group ordered by timestamp DESC
 	GetMetricsByDeviceAndPrefix(ctx context.Context, arg GetMetricsByDeviceAndPrefixParams) ([]Metric, error)
-	GetMonitor(ctx context.Context, id uuid.UUID) (Monitor, error)
+	GetMonitor(ctx context.Context, id int64) (Monitor, error)
 	// Fetches a single monitor with its credential data.
 	// Used for efficient cache invalidation.
-	GetMonitorWithCredentials(ctx context.Context, id uuid.UUID) (GetMonitorWithCredentialsRow, error)
-	GetMonitorsByCredentialID(ctx context.Context, credentialProfileID uuid.UUID) ([]uuid.UUID, error)
+	GetMonitorWithCredentials(ctx context.Context, id int64) (GetMonitorWithCredentialsRow, error)
+	GetMonitorsByCredentialID(ctx context.Context, credentialProfileID int64) ([]int64, error)
 	// Fetches all monitors using a specific credential profile, with their credential data.
 	// Used for efficient cache invalidation when a credential profile changes.
-	GetMonitorsWithCredentialsByCredentialID(ctx context.Context, credentialProfileID uuid.UUID) ([]GetMonitorsWithCredentialsByCredentialIDRow, error)
+	GetMonitorsWithCredentialsByCredentialID(ctx context.Context, credentialProfileID int64) ([]GetMonitorsWithCredentialsByCredentialIDRow, error)
 	// Loads active monitors with their credential data in a single query.
 	// Used by scheduler to initialize cache at startup.
 	ListActiveMonitorsWithCredentials(ctx context.Context) ([]ListActiveMonitorsWithCredentialsRow, error)
 	ListAllDiscoveredDevices(ctx context.Context) ([]DiscoveredDevice, error)
 	ListCredentialProfiles(ctx context.Context) ([]CredentialProfile, error)
-	ListDiscoveredDevices(ctx context.Context, discoveryProfileID uuid.NullUUID) ([]DiscoveredDevice, error)
+	ListDiscoveredDevices(ctx context.Context, discoveryProfileID pgtype.Int8) ([]DiscoveredDevice, error)
 	ListDiscoveryProfiles(ctx context.Context) ([]DiscoveryProfile, error)
 	ListMonitors(ctx context.Context) ([]Monitor, error)
 	UpdateCredentialProfile(ctx context.Context, arg UpdateCredentialProfileParams) (CredentialProfile, error)

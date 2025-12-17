@@ -43,7 +43,7 @@ func (h *DeviceHandler) List(w http.ResponseWriter, r *http.Request) {
 
 // Get handles GET /devices/{id}
 func (h *DeviceHandler) Get(w http.ResponseWriter, r *http.Request) {
-	id, ok := common.ParseUUIDParam(w, r, "id")
+	id, ok := common.ParseIDParam(w, r, "id")
 	if !ok {
 		return
 	}
@@ -57,7 +57,7 @@ func (h *DeviceHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 // Delete handles DELETE /devices/{id}
 func (h *DeviceHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	id, ok := common.ParseUUIDParam(w, r, "id")
+	id, ok := common.ParseIDParam(w, r, "id")
 	if !ok {
 		return
 	}
@@ -71,7 +71,7 @@ func (h *DeviceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 // Provision handles POST /devices/{id}/provision - provisions a monitor from a discovered device
 func (h *DeviceHandler) Provision(w http.ResponseWriter, r *http.Request) {
-	id, ok := common.ParseUUIDParam(w, r, "id")
+	id, ok := common.ParseIDParam(w, r, "id")
 	if !ok {
 		return
 	}

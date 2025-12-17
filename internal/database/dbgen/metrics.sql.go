@@ -7,20 +7,18 @@ package dbgen
 
 import (
 	"context"
-
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
+	"time"
 )
 
 const getAllMetricNames = `-- name: GetAllMetricNames :many
 SELECT DISTINCT name
 FROM metrics
-WHERE device_id = ANY($1::uuid[])
+WHERE device_id = ANY($1::bigint[])
 ORDER BY name
 `
 
 // Get all unique metric names (for discovery/autocomplete)
-func (q *Queries) GetAllMetricNames(ctx context.Context, deviceIds []uuid.UUID) ([]string, error) {
+func (q *Queries) GetAllMetricNames(ctx context.Context, deviceIds []int64) ([]string, error) {
 	rows, err := q.db.Query(ctx, getAllMetricNames, deviceIds)
 	if err != nil {
 		return nil, err
@@ -44,7 +42,7 @@ const getLatestMetricsByDeviceAndPrefix = `-- name: GetLatestMetricsByDeviceAndP
 SELECT DISTINCT ON (device_id, name)
        timestamp, device_id, name, value, type
 FROM metrics
-WHERE device_id = ANY($1::uuid[])
+WHERE device_id = ANY($1::bigint[])
   AND name LIKE $2
   AND timestamp >= $3
   AND timestamp <= $4
@@ -52,10 +50,10 @@ ORDER BY device_id, name, timestamp DESC
 `
 
 type GetLatestMetricsByDeviceAndPrefixParams struct {
-	DeviceIds         []uuid.UUID        `json:"device_ids"`
-	MetricNamePattern string             `json:"metric_name_pattern"`
-	StartTime         pgtype.Timestamptz `json:"start_time"`
-	EndTime           pgtype.Timestamptz `json:"end_time"`
+	DeviceIds         []int64   `json:"device_ids"`
+	MetricNamePattern string    `json:"metric_name_pattern"`
+	StartTime         time.Time `json:"start_time"`
+	EndTime           time.Time `json:"end_time"`
 }
 
 // Query the latest value for each metric (per device) with prefix matching
@@ -95,7 +93,7 @@ SELECT m.timestamp, m.device_id, m.name, m.value, m.type
 FROM (
   SELECT DISTINCT metrics.device_id, metrics.name
   FROM metrics
-  WHERE metrics.device_id = ANY($1::uuid[])
+  WHERE metrics.device_id = ANY($1::bigint[])
     AND metrics.name LIKE $2
     AND metrics.timestamp >= $3
     AND metrics.timestamp <= $4
@@ -114,11 +112,11 @@ ORDER BY m.device_id, m.name, m.timestamp DESC
 `
 
 type GetMetricsByDeviceAndPrefixParams struct {
-	DeviceIds         []uuid.UUID        `json:"device_ids"`
-	MetricNamePattern string             `json:"metric_name_pattern"`
-	StartTime         pgtype.Timestamptz `json:"start_time"`
-	EndTime           pgtype.Timestamptz `json:"end_time"`
-	LimitCount        int32              `json:"limit_count"`
+	DeviceIds         []int64   `json:"device_ids"`
+	MetricNamePattern string    `json:"metric_name_pattern"`
+	StartTime         time.Time `json:"start_time"`
+	EndTime           time.Time `json:"end_time"`
+	LimitCount        int32     `json:"limit_count"`
 }
 
 // Query metrics for devices with per-metric limiting using LATERAL JOIN

@@ -7,13 +7,13 @@ package dbgen
 import (
 	"encoding/json"
 	"net/netip"
+	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type CredentialProfile struct {
-	ID          uuid.UUID          `json:"id"`
+	ID          int64              `json:"id"`
 	Name        string             `json:"name"`
 	Description pgtype.Text        `json:"description"`
 	Protocol    string             `json:"protocol"`
@@ -23,8 +23,8 @@ type CredentialProfile struct {
 }
 
 type DiscoveredDevice struct {
-	ID                 uuid.UUID          `json:"id"`
-	DiscoveryProfileID uuid.NullUUID      `json:"discovery_profile_id"`
+	ID                 int64              `json:"id"`
+	DiscoveryProfileID pgtype.Int8        `json:"discovery_profile_id"`
 	IpAddress          netip.Addr         `json:"ip_address"`
 	Port               int32              `json:"port"`
 	Status             pgtype.Text        `json:"status"`
@@ -33,12 +33,12 @@ type DiscoveredDevice struct {
 }
 
 type DiscoveryProfile struct {
-	ID                  uuid.UUID          `json:"id"`
+	ID                  int64              `json:"id"`
 	Name                string             `json:"name"`
 	TargetValue         string             `json:"target_value"`
 	Port                int32              `json:"port"`
 	PortScanTimeoutMs   pgtype.Int4        `json:"port_scan_timeout_ms"`
-	CredentialProfileID uuid.UUID          `json:"credential_profile_id"`
+	CredentialProfileID int64              `json:"credential_profile_id"`
 	LastRunAt           pgtype.Timestamptz `json:"last_run_at"`
 	LastRunStatus       pgtype.Text        `json:"last_run_status"`
 	DevicesDiscovered   pgtype.Int4        `json:"devices_discovered"`
@@ -49,21 +49,21 @@ type DiscoveryProfile struct {
 }
 
 type Metric struct {
-	Timestamp pgtype.Timestamptz `json:"timestamp"`
-	DeviceID  uuid.UUID          `json:"device_id"`
-	Name      string             `json:"name"`
-	Value     float64            `json:"value"`
-	Type      pgtype.Text        `json:"type"`
+	Timestamp time.Time   `json:"timestamp"`
+	DeviceID  int64       `json:"device_id"`
+	Name      string      `json:"name"`
+	Value     float64     `json:"value"`
+	Type      pgtype.Text `json:"type"`
 }
 
 type Monitor struct {
-	ID                     uuid.UUID          `json:"id"`
+	ID                     int64              `json:"id"`
 	DisplayName            pgtype.Text        `json:"display_name"`
 	Hostname               pgtype.Text        `json:"hostname"`
 	IpAddress              netip.Addr         `json:"ip_address"`
 	PluginID               string             `json:"plugin_id"`
-	CredentialProfileID    uuid.UUID          `json:"credential_profile_id"`
-	DiscoveryProfileID     uuid.UUID          `json:"discovery_profile_id"`
+	CredentialProfileID    int64              `json:"credential_profile_id"`
+	DiscoveryProfileID     int64              `json:"discovery_profile_id"`
 	PollingIntervalSeconds pgtype.Int4        `json:"polling_interval_seconds"`
 	Status                 pgtype.Text        `json:"status"`
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`

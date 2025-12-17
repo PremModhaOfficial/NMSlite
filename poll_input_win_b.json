@@ -1,0 +1,11 @@
+[
+  {
+    "request_id": "req_win_b",
+    "target": "127.0.0.1",
+    "port": 15986,
+    "credentials": {
+      "username": "vboxuser",
+      "password": "admin"
+    }
+  }
+]

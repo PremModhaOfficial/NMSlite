@@ -6,7 +6,8 @@ import (
 	"log/slog"
 	"net/netip"
 
-	"github.com/google/uuid"
+	"strconv"
+
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/nmslite/nmslite/internal/database/dbgen"
 	"github.com/nmslite/nmslite/internal/globals"
@@ -54,7 +55,7 @@ func (p *Provisioner) ProvisionFromEvent(ctx context.Context, event globals.Devi
 }
 
 // ProvisionFromID provisions a monitor from an existing discovered_device ID.
-func (p *Provisioner) ProvisionFromID(ctx context.Context, deviceID uuid.UUID) (*dbgen.Monitor, error) {
+func (p *Provisioner) ProvisionFromID(ctx context.Context, deviceID int64) (*dbgen.Monitor, error) {
 	// 1. Fetch Discovered Device
 	device, err := p.querier.GetDiscoveredDevice(ctx, deviceID)
 	if err != nil {
@@ -66,7 +67,7 @@ func (p *Provisioner) ProvisionFromID(ctx context.Context, deviceID uuid.UUID) (
 	}
 
 	// 2. Fetch Discovery Profile
-	profile, err := p.querier.GetDiscoveryProfile(ctx, device.DiscoveryProfileID.UUID)
+	profile, err := p.querier.GetDiscoveryProfile(ctx, device.DiscoveryProfileID.Int64)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch discovery profile: %w", err)
 	}
@@ -92,7 +93,7 @@ func (p *Provisioner) ProvisionFromID(ctx context.Context, deviceID uuid.UUID) (
 	}
 
 	p.logger.InfoContext(ctx, "Provisioning monitor from ID",
-		slog.String("device_id", deviceID.String()),
+		slog.String("device_id", strconv.FormatInt(deviceID, 10)),
 		slog.String("ip", device.IpAddress.String()),
 		slog.String("plugin", pluginID),
 	)
@@ -127,7 +128,7 @@ func (p *Provisioner) ProvisionFromID(ctx context.Context, deviceID uuid.UUID) (
 	return &monitor, nil
 }
 
-func (p *Provisioner) pushToPoller(ctx context.Context, monitorID uuid.UUID) error {
+func (p *Provisioner) pushToPoller(ctx context.Context, monitorID int64) error {
 	fullMonitor, err := p.querier.GetMonitorWithCredentials(ctx, monitorID)
 	if err != nil {
 		return fmt.Errorf("failed to fetch full monitor for cache: %w", err)

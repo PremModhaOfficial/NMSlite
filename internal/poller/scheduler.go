@@ -18,7 +18,7 @@ import (
 
 // HeapItem represents an entry in the priority queue (just ID + deadline)
 type HeapItem struct {
-	MonitorID        uuid.UUID
+	MonitorID        int64
 	NextPollDeadline time.Time
 }
 
@@ -71,7 +71,7 @@ type SchedulerImpl struct {
 	querier       dbgen.Querier
 	pluginManager *PluginManager
 	credService   *auth.CredentialService
-	resultWriter  *ResultWriter
+	resultWriter  *PollResultWriter
 	logger        *slog.Logger
 
 	// Configuration
@@ -80,7 +80,7 @@ type SchedulerImpl struct {
 	// Priority queue
 	heap     PriorityQueue
 	heapMu   sync.Mutex
-	monitors map[uuid.UUID]*ScheduledMonitor
+	monitors map[int64]*ScheduledMonitor
 
 	// Semaphores for concurrency control
 	livenessSem chan struct{}
@@ -99,7 +99,7 @@ func NewSchedulerImpl(
 	events *globals.EventChannels,
 	pluginManager *PluginManager,
 	credService *auth.CredentialService,
-	resultWriter *ResultWriter,
+	resultWriter *PollResultWriter,
 ) *SchedulerImpl {
 	cfg := &globals.GetConfig().Scheduler
 	return &SchedulerImpl{
@@ -113,7 +113,7 @@ func NewSchedulerImpl(
 		livenessSem:   make(chan struct{}, cfg.LivenessWorkers),
 		pluginSem:     make(chan struct{}, cfg.PluginWorkers),
 		heap:          make(PriorityQueue, 0),
-		monitors:      make(map[uuid.UUID]*ScheduledMonitor),
+		monitors:      make(map[int64]*ScheduledMonitor),
 		done:          make(chan struct{}),
 	}
 }
@@ -700,7 +700,7 @@ func (s *SchedulerImpl) updateMonitorCacheFromRow(row dbgen.GetMonitorWithCreden
 }
 
 // removeMonitorFromCache removes a monitor from the cache
-func (s *SchedulerImpl) removeMonitorFromCache(id uuid.UUID) {
+func (s *SchedulerImpl) removeMonitorFromCache(id int64) {
 	s.heapMu.Lock()
 	defer s.heapMu.Unlock()
 
@@ -725,7 +725,7 @@ func (s *SchedulerImpl) shutdown() {
 }
 
 // updateMonitorStatus updates the monitor's status in the database
-func (s *SchedulerImpl) updateMonitorStatus(ctx context.Context, monitorID uuid.UUID, status string) {
+func (s *SchedulerImpl) updateMonitorStatus(ctx context.Context, monitorID int64, status string) {
 	err := s.querier.UpdateMonitorStatus(ctx, dbgen.UpdateMonitorStatusParams{
 		ID:     monitorID,
 		Status: pgtype.Text{String: status, Valid: true},

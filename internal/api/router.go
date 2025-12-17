@@ -16,7 +16,7 @@ import (
 )
 
 // NewRouter NewRouter creates and configures the API router
-func NewRouter(authService *auth2.Service, db *pgxpool.Pool, events *globals.EventChannels, hub *discovery.Hub, provisioner *discovery.Provisioner) http.Handler {
+func NewRouter(authService *auth2.Service, db *pgxpool.Pool, events *globals.EventChannels, provisioner *discovery.Provisioner) http.Handler {
 	cfg := globals.GetConfig()
 	logger := slog.Default()
 	r := chi.NewRouter()
@@ -50,14 +50,11 @@ func NewRouter(authService *auth2.Service, db *pgxpool.Pool, events *globals.Eve
 	healthHandler := NewHealthHandler()
 	systemHandler := handlers.NewSystemHandler(deps)
 	credentialHandler := handlers.NewCredentialHandler(deps)
-	discoveryHandler := handlers.NewDiscoveryHandler(deps, hub)
+	discoveryHandler := handlers.NewDiscoveryHandler(deps)
 	monitorHandler := handlers.NewMonitorHandler(deps)
 
 	// Public routes (no auth required)
 	r.Get("/health", healthHandler.Health)
-
-	// Websocket route
-	r.Get("/ws/discovery", discoveryHandler.HandleWS)
 
 	// API v1 routes
 	r.Route("/api/v1", func(r chi.Router) {

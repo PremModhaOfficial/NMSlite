@@ -1,4 +1,4 @@
 {
   "name": "Windows Server (WinRM)",
-  "protocol": "winrm"
+  "protocol": "windows-winrm"
 }
