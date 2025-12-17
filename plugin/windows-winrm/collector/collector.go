@@ -99,22 +99,32 @@ type CPUData struct {
 }
 
 // CollectCPU queries Win32_PerfFormattedData_PerfOS_Processor and returns per-core CPU metrics
-// Excludes the "_Total" aggregate entry
+// Includes both per-core metrics and the aggregate total
 func CollectCPU(client *winrm.Client) ([]models.Metric, error) {
-	script := `Get-WmiObject Win32_PerfFormattedData_PerfOS_Processor | Where-Object { $_.Name -ne '_Total' } | Select-Object Name, PercentProcessorTime | ConvertTo-Json -Compress`
+	script := `Get-WmiObject Win32_PerfFormattedData_PerfOS_Processor | Select-Object Name, PercentProcessorTime | ConvertTo-Json -Compress`
 
 	cpuData, err := executeWMIQuery[CPUData](client, script, true)
 	if err != nil {
 		return nil, fmt.Errorf("CPU collection failed: %w", err)
 	}
 
-	metrics := make([]models.Metric, 0, len(cpuData))
+	metrics := make([]models.Metric, 0, len(cpuData)+1)
 	for _, cpu := range cpuData {
-		metrics = append(metrics, models.Metric{
-			Name:  fmt.Sprintf("system.cpu.%s.usage", cpu.Name),
-			Value: float64(cpu.PercentProcessorTime),
-			Type:  "gauge",
-		})
+		if cpu.Name == "_Total" {
+			// Aggregate CPU usage
+			metrics = append(metrics, models.Metric{
+				Name:  "system.cpu.usage",
+				Value: float64(cpu.PercentProcessorTime),
+				Type:  "gauge",
+			})
+		} else {
+			// Per-core CPU usage
+			metrics = append(metrics, models.Metric{
+				Name:  fmt.Sprintf("system.cpu.%s.usage", cpu.Name),
+				Value: float64(cpu.PercentProcessorTime),
+				Type:  "gauge",
+			})
+		}
 	}
 	return metrics, nil
 }
@@ -169,7 +179,7 @@ type DiskData struct {
 }
 
 // CollectDisk queries Win32_LogicalDisk and returns per-mount disk usage metrics
-// Only fixed drives (DriveType=3) are included
+// Only fixed drives (DriveType=3) are included. Also returns aggregate totals.
 func CollectDisk(client *winrm.Client) ([]models.Metric, error) {
 	script := `Get-WmiObject Win32_LogicalDisk -Filter "DriveType=3" | Select-Object DeviceID, Size, FreeSpace | ConvertTo-Json -Compress`
 
@@ -179,6 +189,8 @@ func CollectDisk(client *winrm.Client) ([]models.Metric, error) {
 	}
 
 	var metrics []models.Metric
+	var aggTotal, aggFree float64
+
 	for _, disk := range diskData {
 		if disk.Size == 0 {
 			continue
@@ -190,13 +202,31 @@ func CollectDisk(client *winrm.Client) ([]models.Metric, error) {
 		usagePercent := (usedBytes / totalBytes) * 100
 		deviceName := strings.ToLower(strings.TrimSuffix(disk.DeviceID, ":"))
 
+		// Per-disk metrics
 		metrics = append(metrics,
 			models.Metric{Name: fmt.Sprintf("system.disk.%s.total_bytes", deviceName), Value: totalBytes, Type: "gauge"},
 			models.Metric{Name: fmt.Sprintf("system.disk.%s.used_bytes", deviceName), Value: usedBytes, Type: "gauge"},
 			models.Metric{Name: fmt.Sprintf("system.disk.%s.free_bytes", deviceName), Value: freeBytes, Type: "gauge"},
 			models.Metric{Name: fmt.Sprintf("system.disk.%s.usage_percent", deviceName), Value: usagePercent, Type: "gauge"},
 		)
+
+		// Accumulate for aggregates
+		aggTotal += totalBytes
+		aggFree += freeBytes
 	}
+
+	// Aggregate disk metrics
+	if aggTotal > 0 {
+		aggUsed := aggTotal - aggFree
+		aggUsagePercent := (aggUsed / aggTotal) * 100
+		metrics = append(metrics,
+			models.Metric{Name: "system.disk.total_bytes", Value: aggTotal, Type: "gauge"},
+			models.Metric{Name: "system.disk.used_bytes", Value: aggUsed, Type: "gauge"},
+			models.Metric{Name: "system.disk.free_bytes", Value: aggFree, Type: "gauge"},
+			models.Metric{Name: "system.disk.usage_percent", Value: aggUsagePercent, Type: "gauge"},
+		)
+	}
+
 	return metrics, nil
 }
 
@@ -213,7 +243,8 @@ type NetworkData struct {
 }
 
 // CollectNetwork queries Win32_PerfFormattedData_Tcpip_NetworkInterface
-// and returns per-interface network metrics with separate in/out direction entries
+// and returns per-interface network metrics with separate in/out direction entries.
+// Also returns aggregate totals across all interfaces.
 func CollectNetwork(client *winrm.Client) ([]models.Metric, error) {
 	script := `Get-WmiObject Win32_PerfFormattedData_Tcpip_NetworkInterface | Select-Object Name, BytesReceivedPersec, BytesSentPersec, CurrentBandwidth | ConvertTo-Json -Compress`
 
@@ -223,10 +254,13 @@ func CollectNetwork(client *winrm.Client) ([]models.Metric, error) {
 	}
 
 	var metrics []models.Metric
+	var aggRecv, aggSent, aggBandwidth float64
+
 	for _, net := range netData {
 		ifaceName := sanitizeInterfaceName(net.Name)
 		linkSpeedBytes := float64(net.CurrentBandwidth) / 8
 
+		// Per-interface metrics
 		metrics = append(metrics,
 			models.Metric{Name: fmt.Sprintf("network.%s.bytes_recv_per_sec", ifaceName), Value: float64(net.BytesReceivedPersec), Type: "gauge"},
 			models.Metric{Name: fmt.Sprintf("network.%s.bytes_sent_per_sec", ifaceName), Value: float64(net.BytesSentPersec), Type: "gauge"},
@@ -236,7 +270,24 @@ func CollectNetwork(client *winrm.Client) ([]models.Metric, error) {
 				models.Metric{Name: fmt.Sprintf("network.%s.bandwidth_bytes", ifaceName), Value: linkSpeedBytes, Type: "gauge"},
 			)
 		}
+
+		// Accumulate for aggregates
+		aggRecv += float64(net.BytesReceivedPersec)
+		aggSent += float64(net.BytesSentPersec)
+		aggBandwidth += linkSpeedBytes
 	}
+
+	// Aggregate network metrics
+	metrics = append(metrics,
+		models.Metric{Name: "network.bytes_recv_per_sec", Value: aggRecv, Type: "gauge"},
+		models.Metric{Name: "network.bytes_sent_per_sec", Value: aggSent, Type: "gauge"},
+	)
+	if aggBandwidth > 0 {
+		metrics = append(metrics,
+			models.Metric{Name: "network.bandwidth_bytes", Value: aggBandwidth, Type: "gauge"},
+		)
+	}
+
 	return metrics, nil
 }
 

@@ -18,16 +18,8 @@ type Registry struct {
 
 // Protocol represents a protocol definition
 type Protocol struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	DefaultPort int    `json:"default_port"`
-	Version     string `json:"version"`
-}
-
-// ProtocolListResponse represents the response for listing protocols
-type ProtocolListResponse struct {
-	Data []*Protocol `json:"data"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 var (
@@ -56,38 +48,26 @@ func newRegistry() *Registry {
 func (r *Registry) initializeProtocols() {
 	// WinRM Protocol
 	r.registerProtocol(&Protocol{
-		ID:          "winrm",
-		Name:        "Windows Server (WinRM)",
-		Description: "Collects metrics from Windows servers via WinRM",
-		DefaultPort: 5985,
-		Version:     "1.0.0",
+		ID:   "winrm",
+		Name: "Windows Server (WinRM)",
 	}, reflect.TypeOf(WinRMCredentials{}))
 
 	// SSH Protocol
 	r.registerProtocol(&Protocol{
-		ID:          "ssh",
-		Name:        "Linux/Unix (SSH)",
-		Description: "Collects metrics from Linux/Unix servers via SSH",
-		DefaultPort: 22,
-		Version:     "1.0.0",
+		ID:   "ssh",
+		Name: "Linux/Unix (SSH)",
 	}, reflect.TypeOf(SSHCredentials{}))
 
 	// SNMP v2c Protocol
 	r.registerProtocol(&Protocol{
-		ID:          "snmp-v2c",
-		Name:        "SNMP v2c",
-		Description: "Collects metrics via SNMP v2c",
-		DefaultPort: 161,
-		Version:     "1.0.0",
+		ID:   "snmp-v2c",
+		Name: "SNMP v2c",
 	}, reflect.TypeOf(SNMPCredentials{}))
 
 	// SNMP v3 Protocol
 	r.registerProtocol(&Protocol{
-		ID:          "snmp-v3",
-		Name:        "SNMP v3",
-		Description: "Collects metrics via SNMP v3 (USM)",
-		DefaultPort: 161,
-		Version:     "1.0.0",
+		ID:   "snmp-v3",
+		Name: "SNMP v3",
 	}, reflect.TypeOf(SNMPv3Credentials{}))
 }
 

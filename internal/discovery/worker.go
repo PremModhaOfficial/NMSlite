@@ -252,10 +252,8 @@ func (w *Worker) executeDiscovery(
 		// If not found in registry (e.g. internal ssh/snmp), create a placeholder
 		// This ensures we can still pass a valid PluginInfo to the event handler
 		plugin = &globals.PluginInfo{
-			Manifest: globals.PluginManifest{
-				Name:     credProfile.Protocol, // Use protocol as name
-				Protocol: credProfile.Protocol,
-			},
+			Name:     credProfile.Protocol, // Use protocol as name
+			Protocol: credProfile.Protocol,
 		}
 		logger.DebugContext(ctx, "Using internal/placeholder plugin for protocol",
 			slog.String("protocol", credProfile.Protocol),
@@ -285,7 +283,7 @@ func (w *Worker) executeDiscovery(
 			logger.InfoContext(ctx, "Protocol handshake succeeded",
 				slog.String("ip", targetIP),
 				slog.Int("port", port),
-				slog.String("protocol", validatedPlugin.Manifest.Protocol),
+				slog.String("protocol", validatedPlugin.Protocol),
 				slog.String("credential_id", credentialID.String()),
 			)
 
@@ -330,7 +328,7 @@ func (w *Worker) validateTarget(
 	for _, plugin := range plugins {
 		var result *HandshakeResult
 
-		switch plugin.Manifest.Protocol {
+		switch plugin.Protocol {
 		case "ssh":
 			result, _ = ValidateSSH(ip, port, creds, timeout)
 		case "winrm":
@@ -341,7 +339,7 @@ func (w *Worker) validateTarget(
 			result, _ = ValidateSNMPv3(ip, port, creds, timeout)
 		default:
 			logger.WarnContext(ctx, "Unknown protocol, skipping handshake",
-				slog.String("protocol", plugin.Manifest.Protocol),
+				slog.String("protocol", plugin.Protocol),
 			)
 			continue
 		}
@@ -438,15 +436,15 @@ func StartProvisionHandler(ctx context.Context, events *globals.EventChannels, q
 				logger.InfoContext(ctx, "Device validated, creating discovered_devices entry",
 					slog.String("ip", event.IP),
 					slog.Int("port", event.Port),
-					slog.String("protocol", event.Plugin.Manifest.Protocol),
+					slog.String("protocol", event.Plugin.Protocol),
 				)
 
 				// Broadcast device found event immediately
 				hub.Broadcast("device_found", event.DiscoveryProfile.ID, map[string]interface{}{
 					"ip":       event.IP,
 					"port":     event.Port,
-					"protocol": event.Plugin.Manifest.Protocol,
-					"plugin":   event.Plugin.Manifest.Name,
+					"protocol": event.Plugin.Protocol,
+					"plugin":   event.Plugin.Name,
 				})
 
 				// 1. Create discovered_devices entry

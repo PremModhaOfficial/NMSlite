@@ -177,8 +177,8 @@ func startDiscoveryWorker(ctx context.Context, db *pgxpool.Pool, events *globals
 		logger.Info("Plugins loaded", "count", len(pluginList))
 		for _, p := range pluginList {
 			logger.Info("Plugin registered",
-				"name", p.Manifest.Name,
-				"protocol", p.Manifest.Protocol,
+				"name", p.Name,
+				"protocol", p.Protocol,
 			)
 		}
 	}

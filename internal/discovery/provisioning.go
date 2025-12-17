@@ -35,14 +35,14 @@ func NewProvisioner(querier dbgen.Querier, events *globals.EventChannels, plugin
 func (p *Provisioner) ProvisionFromEvent(ctx context.Context, event globals.DeviceValidatedEvent) error {
 	p.logger.InfoContext(ctx, "Provisioning monitor from event",
 		slog.String("ip", event.IP),
-		slog.String("plugin", event.Plugin.Manifest.Protocol),
+		slog.String("plugin", event.Plugin.Protocol),
 	)
 
 	monitor, err := p.querier.CreateMonitor(ctx, dbgen.CreateMonitorParams{
 		IpAddress:           netip.MustParseAddr(event.IP),
 		Hostname:            pgtype.Text{String: event.Hostname, Valid: event.Hostname != ""},
 		Port:                pgtype.Int4{Int32: int32(event.Port), Valid: true},
-		PluginID:            event.Plugin.Manifest.Protocol,
+		PluginID:            event.Plugin.Protocol,
 		CredentialProfileID: event.CredentialProfile.ID,
 		DiscoveryProfileID:  event.DiscoveryProfile.ID,
 	})
@@ -81,7 +81,7 @@ func (p *Provisioner) ProvisionFromID(ctx context.Context, deviceID uuid.UUID) (
 	// Try to find registered plugin
 	pluginID := credProfile.Protocol // Default to protocol name if not internal
 	if plugin, ok := p.pluginManager.Get(credProfile.Protocol); ok {
-		pluginID = plugin.Manifest.Protocol
+		pluginID = plugin.Protocol
 	} else {
 		// Fallback for internal protocols or if registry lookup fails (assuming protocol name = plugin id for simple cases)
 		// Or we can check if it's one of the known internal ones?

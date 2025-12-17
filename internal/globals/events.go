@@ -10,12 +10,11 @@ import (
 	// "github.com/nmslite/nmslite/internal/poller" - REMOVED
 )
 
-// PluginInfo represents a loaded plugin with its metadata and runtime paths
+// PluginInfo represents a loaded plugin with its metadata and runtime path
 type PluginInfo struct {
 	Name       string `json:"name"`
 	Protocol   string `json:"protocol"`
 	BinaryPath string `json:"-"`
-	ConfigDir  string `json:"-"`
 }
 
 // PollTask represents a single polling task
@@ -69,30 +68,12 @@ type MonitorStateEvent struct {
 	Timestamp time.Time
 }
 
-// PluginEvent is published when a plugin execution encounters issues
-type PluginEvent struct {
-	PluginID  string
-	MonitorID uuid.UUID
-	EventType string        // "timeout", "error"
-	Error     string        // only used when EventType == "error"
-	Timeout   time.Duration // only used when EventType == "timeout"
-	Timestamp time.Time
-}
-
 // CacheInvalidateEvent signals cache entries need refresh
 // CacheInvalidateEvent signals cache entries need refresh
 type CacheInvalidateEvent struct {
 	UpdateType string                               // "update", "delete"
 	Monitors   []dbgen.GetMonitorWithCredentialsRow // For "update"
 	MonitorIDs []uuid.UUID                          // For "delete"
-}
-
-// EventChannelsConfig configures buffer sizes for event channels
-type EventChannelsConfig struct {
-	DiscoveryBufferSize    int
-	MonitorStateBufferSize int
-	PluginBufferSize       int
-	CacheBufferSize        int
 }
 
 // EventChannels provides typed channels for all system events
@@ -104,9 +85,6 @@ type EventChannels struct {
 
 	// Monitor state events
 	MonitorState chan MonitorStateEvent
-
-	// Plugin events
-	PluginEvent chan PluginEvent
 
 	// Cache events
 	CacheInvalidate chan CacheInvalidateEvent
@@ -129,7 +107,6 @@ func NewEventChannels() *EventChannels {
 		DiscoveryStatus:  make(chan DiscoveryStatusEvent, discoverySize),
 		DeviceValidated:  make(chan DeviceValidatedEvent, discoverySize),
 		MonitorState:     make(chan MonitorStateEvent, cfg.StateSignalChannelSize),
-		PluginEvent:      make(chan PluginEvent, 100), // Hardcoded default
 		CacheInvalidate:  make(chan CacheInvalidateEvent, cfg.CacheEventsChannelSize),
 		done:             make(chan struct{}),
 	}
@@ -144,7 +121,6 @@ func (ec *EventChannels) Close() error {
 	close(ec.DiscoveryStatus)
 	close(ec.DeviceValidated)
 	close(ec.MonitorState)
-	close(ec.PluginEvent)
 	close(ec.CacheInvalidate)
 
 	return nil

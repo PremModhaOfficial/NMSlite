@@ -14,10 +14,7 @@ import (
 // HandshakeResult represents the outcome of a protocol handshake
 type HandshakeResult struct {
 	Success  bool
-	Protocol string
-	Error    string
 	Hostname string
-	Metadata map[string]interface{}
 }
 
 // ValidateSSH attempts SSH handshake with password or key auth
@@ -46,9 +43,7 @@ func ValidateSSH(target string, port int, creds *auth.Credentials, timeout time.
 
 		if err != nil {
 			return &HandshakeResult{
-				Success:  false,
-				Protocol: "ssh",
-				Error:    fmt.Sprintf("failed to parse private key: %v", err),
+				Success: false,
 			}, nil
 		}
 
@@ -57,9 +52,7 @@ func ValidateSSH(target string, port int, creds *auth.Credentials, timeout time.
 
 	if len(authMethods) == 0 {
 		return &HandshakeResult{
-			Success:  false,
-			Protocol: "ssh",
-			Error:    "no authentication method provided (password or private_key required)",
+			Success: false,
 		}, nil
 	}
 
@@ -73,9 +66,7 @@ func ValidateSSH(target string, port int, creds *auth.Credentials, timeout time.
 	client, err := ssh.Dial("tcp", address, config)
 	if err != nil {
 		return &HandshakeResult{
-			Success:  false,
-			Protocol: "ssh",
-			Error:    fmt.Sprintf("SSH handshake failed: %v", err),
+			Success: false,
 		}, nil
 	}
 	defer client.Close()
@@ -92,11 +83,7 @@ func ValidateSSH(target string, port int, creds *auth.Credentials, timeout time.
 
 	return &HandshakeResult{
 		Success:  true,
-		Protocol: "ssh",
 		Hostname: hostname,
-		Metadata: map[string]interface{}{
-			"remote_version": string(client.ServerVersion()),
-		},
 	}, nil
 }
 
@@ -108,9 +95,7 @@ func ValidateWinRM(target string, port int, creds *auth.Credentials, timeout tim
 	client, err := winrm.NewClient(endpoint, creds.Username, creds.Password)
 	if err != nil {
 		return &HandshakeResult{
-			Success:  false,
-			Protocol: "winrm",
-			Error:    fmt.Sprintf("WinRM client creation failed: %v", err),
+			Success: false,
 		}, nil
 	}
 
@@ -118,9 +103,7 @@ func ValidateWinRM(target string, port int, creds *auth.Credentials, timeout tim
 	shell, err := client.CreateShell()
 	if err != nil {
 		return &HandshakeResult{
-			Success:  false,
-			Protocol: "winrm",
-			Error:    fmt.Sprintf("WinRM shell creation failed: %v", err),
+			Success: false,
 		}, nil
 	}
 	defer shell.Close()
@@ -135,11 +118,7 @@ func ValidateWinRM(target string, port int, creds *auth.Credentials, timeout tim
 
 	return &HandshakeResult{
 		Success:  true,
-		Protocol: "winrm",
 		Hostname: hostname,
-		Metadata: map[string]interface{}{
-			"shell_id": "unknown", // shell ID not exposed in current winrm API
-		},
 	}, nil
 }
 
@@ -157,9 +136,7 @@ func ValidateSNMPv2c(target string, port int, creds *auth.Credentials, timeout t
 	err := g.Connect()
 	if err != nil {
 		return &HandshakeResult{
-			Success:  false,
-			Protocol: "snmp-v2c",
-			Error:    fmt.Sprintf("SNMP connection failed: %v", err),
+			Success: false,
 		}, nil
 	}
 	defer g.Conn.Close()
@@ -169,18 +146,16 @@ func ValidateSNMPv2c(target string, port int, creds *auth.Credentials, timeout t
 	result, err := g.Get(oids)
 	if err != nil {
 		return &HandshakeResult{
-			Success:  false,
-			Protocol: "snmp-v2c",
-			Error:    fmt.Sprintf("SNMP Get request failed: %v", err),
+			Success: false,
 		}, nil
 	}
 
 	// Extract values
-	var sysDescr, hostname string
+	var hostname string
 	for _, variable := range result.Variables {
 		switch variable.Name {
 		case ".1.3.6.1.2.1.1.1.0":
-			sysDescr = fmt.Sprintf("%v", variable.Value)
+			// sysDescr - skipped, not used
 		case ".1.3.6.1.2.1.1.5.0":
 			hostname = fmt.Sprintf("%v", variable.Value)
 		}
@@ -188,11 +163,7 @@ func ValidateSNMPv2c(target string, port int, creds *auth.Credentials, timeout t
 
 	return &HandshakeResult{
 		Success:  true,
-		Protocol: "snmp-v2c",
 		Hostname: hostname,
-		Metadata: map[string]interface{}{
-			"sysDescr": sysDescr,
-		},
 	}, nil
 }
 
@@ -217,9 +188,7 @@ func ValidateSNMPv3(target string, port int, creds *auth.Credentials, timeout ti
 		securityLevel = gosnmp.AuthPriv
 	default:
 		return &HandshakeResult{
-			Success:  false,
-			Protocol: "snmp-v3",
-			Error:    fmt.Sprintf("invalid security level: %s", creds.SecurityLevel),
+			Success: false,
 		}, nil
 	}
 
@@ -289,9 +258,7 @@ func ValidateSNMPv3(target string, port int, creds *auth.Credentials, timeout ti
 	err := g.Connect()
 	if err != nil {
 		return &HandshakeResult{
-			Success:  false,
-			Protocol: "snmp-v3",
-			Error:    fmt.Sprintf("SNMP v3 connection failed: %v", err),
+			Success: false,
 		}, nil
 	}
 	defer g.Conn.Close()
@@ -301,18 +268,16 @@ func ValidateSNMPv3(target string, port int, creds *auth.Credentials, timeout ti
 	result, err := g.Get(oids)
 	if err != nil {
 		return &HandshakeResult{
-			Success:  false,
-			Protocol: "snmp-v3",
-			Error:    fmt.Sprintf("SNMP v3 Get request failed: %v", err),
+			Success: false,
 		}, nil
 	}
 
 	// Extract values
-	var sysDescr, hostname string
+	var hostname string
 	for _, variable := range result.Variables {
 		switch variable.Name {
 		case ".1.3.6.1.2.1.1.1.0":
-			sysDescr = fmt.Sprintf("%v", variable.Value)
+			// sysDescr - skipped, not used
 		case ".1.3.6.1.2.1.1.5.0":
 			hostname = fmt.Sprintf("%v", variable.Value)
 		}
@@ -320,11 +285,6 @@ func ValidateSNMPv3(target string, port int, creds *auth.Credentials, timeout ti
 
 	return &HandshakeResult{
 		Success:  true,
-		Protocol: "snmp-v3",
 		Hostname: hostname,
-		Metadata: map[string]interface{}{
-			"sysDescr":       sysDescr,
-			"security_level": creds.SecurityLevel,
-		},
 	}, nil
 }

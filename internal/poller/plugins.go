@@ -68,8 +68,11 @@ func (m *PluginManager) Scan() error {
 			continue
 		}
 
-		var manifest globals.PluginManifest
-		if err := json.Unmarshal(manifestData, &manifest); err != nil {
+		var pluginMeta struct {
+			Name     string `json:"name"`
+			Protocol string `json:"protocol"`
+		}
+		if err := json.Unmarshal(manifestData, &pluginMeta); err != nil {
 			m.logger.Warn("Failed to parse manifest", "plugin", pluginName, "error", err)
 			continue
 		}
@@ -83,26 +86,26 @@ func (m *PluginManager) Scan() error {
 
 		// Register plugin
 		info := &globals.PluginInfo{
-			Manifest:   manifest,
+			Name:       pluginMeta.Name,
+			Protocol:   pluginMeta.Protocol,
 			BinaryPath: binaryPath,
-			ConfigDir:  pluginPath,
 		}
 
 		// Enforce 1:1 Protocol mapping (last one wins if duplicate, or error? User said 1:1)
 		// We'll log a warning if overwriting.
-		if existing, exists := m.plugins[manifest.Protocol]; exists {
+		if existing, exists := m.plugins[pluginMeta.Protocol]; exists {
 			m.logger.Warn("Duplicate plugin for protocol found, overwriting",
-				"protocol", manifest.Protocol,
-				"old_plugin", existing.Manifest.Name,
-				"new_plugin", manifest.Name,
+				"protocol", pluginMeta.Protocol,
+				"old_plugin", existing.Name,
+				"new_plugin", pluginMeta.Name,
 			)
 		}
 
-		m.plugins[manifest.Protocol] = info
+		m.plugins[pluginMeta.Protocol] = info
 
 		m.logger.Info("Loaded plugin",
-			"protocol", manifest.Protocol,
-			"name", manifest.Name,
+			"protocol", pluginMeta.Protocol,
+			"name", pluginMeta.Name,
 		)
 	}
 
@@ -145,7 +148,7 @@ func (m *PluginManager) Poll(ctx context.Context, protocol string, tasks []globa
 
 	// Prepare command
 	cmd := exec.CommandContext(ctx, plugin.BinaryPath)
-	cmd.Dir = plugin.ConfigDir // Run in plugin directory
+	cmd.Dir = filepath.Dir(plugin.BinaryPath) // Run in plugin directory
 
 	// Pipe input
 	cmd.Stdin = bytes.NewReader(inputData)
